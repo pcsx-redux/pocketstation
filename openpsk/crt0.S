@@ -33,6 +33,31 @@ _start:
     strb    r0, [r1]
 
     /*
+     * Clear the kernel-state block at WRAM 0xC0..0x108. Two reasons, one loop:
+     *
+     *   - The 4 user-callback slots at 0xF8..0x108 must start empty: a reset leaves the device with
+     *     no callbacks registered (PDA Kernel Spec, "registered callback functions will be
+     *     cleared"), so the first Set-user-callback returns 0 and the SWI 2 / IRQ paths see "none"
+     *     until an application installs one.
+     *   - Everything below them is fixed-address kernel state that the card-link engine REPORTS to
+     *     the PlayStation - ComFlags at 0xC0, the current dir_index at 0xD0 - and nothing else
+     *     writes it at boot. Neither .bss nor .data covers it: they are linker sections and this
+     *     block is at absolute addresses. Power-on RAM is indeterminate on silicon, so without this
+     *     card command 0x5A hands the PS whatever happened to be in RAM. It reads as zero under the
+     *     emulator, which is exactly the environment where that would stay invisible.
+     *
+     * Runs BEFORE the vector/table installs below, because the block covers 0xE0 and that is where
+     * the SWI dispatch-table pointer goes: clear it afterwards and the first syscall reads a null
+     * table. (Measured - it faults out of the boot immediately.)
+     */
+    mov     r0, #0
+    mov     r1, #0xC0
+    add     r2, r1, #0x48          @ end of the block (0x108, one past the last callback slot)
+3:  str     r0, [r1], #4
+    cmp     r1, r2
+    blo     3b
+
+    /*
      * Install the SWI exception vector + dispatch-table pointer in WRAM (retail-faithful layout).
      *   0x08 = SWI vector opcode "ldr pc,[pc,#0x18]" -> loads the absolute service-routine
      *          address from 0x28 (when it executes, PC = 0x08+8, so [PC,#0x18] = [0x28]).
@@ -77,18 +102,6 @@ _start:
     ldr     r0, =fiq_service
     str     r0, [r1, #0x20]        @ WRAM[0x3C] = &fiq_service
 
-    /*
-     * Clear the 4 user-callback slots (SetCallbacks, SWI 1) at WRAM 0xF8..0x108. A reset starts the
-     * device with no callbacks registered (PDA Kernel Spec: "registered callback functions will be
-     * cleared"), so the first Set-user-callback returns 0 and the SWI 2 / IRQ paths see "none" until
-     * an application installs one.
-     */
-    mov     r0, #0
-    mov     r1, #0xF8
-    str     r0, [r1], #4           @ 0xF8  software-interrupt callback
-    str     r0, [r1], #4           @ 0xFC  IRQ callback
-    str     r0, [r1], #4           @ 0x100 FIQ callback
-    str     r0, [r1], #4           @ 0x104 PS file-transfer-display callback
 
     /* Per-mode stacks in WRAM (mirror the retail boot). CPSR control byte: mode + I/F bits. */
     msr     cpsr_c, #0xD1          @ FIQ  mode, IRQ+FIQ disabled
