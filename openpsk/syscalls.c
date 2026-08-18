@@ -27,10 +27,9 @@ unsigned swi_handler_get_pda_status(void) {
  * Read-modify-write of ComFlags bits 16-18 from r0: ComFlags = (ComFlags & ~0x70000)|(r0 & 0x70000).
  * These are kernel-internal UI/communication state bits. Returns nothing meaningful (r0 unspecified). */
 unsigned swi_handler_set_comflags_internal(unsigned bits) {
-    unsigned cf = psk_comflags();
-    cf = (cf & ~PSK_CF_INTERNAL_16_18) | (bits & PSK_CF_INTERNAL_16_18);
-    psk_comflags_set(cf);
-    return cf;
+    /* One guarded read-modify-write, not a read / compute / store spread across three statements -
+     * the COM FIQ can preempt SVC (the core leaves F clear on SWI entry) and would be overwritten. */
+    return psk_comflags_rmw(PSK_CF_INTERNAL_16_18, bits & PSK_CF_INTERNAL_16_18);
 }
 
 /* SWI 8 - Application block number control (Table 3 #8). r0 = get/set spec (1 = set), r1 = block

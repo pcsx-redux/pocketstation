@@ -78,8 +78,40 @@ static inline volatile unsigned int   *psk_ram32_p(unsigned a) { __asm__("":"+r"
 #define PSK_CF_SET_CLOCK      (1u << 29) /* PS requested a clock-set: tail does write-RTC from buf */
 #define PSK_CF_RESTART_MAIN   (1u << 30) /* app exited: FIQ tail tears down and re-enters main */
 
-/* Typed accessors for the live kernel state. */
+/* Mask both interrupts and return the previous CPSR control byte, then put it back. Restoring the
+ * SAVED byte rather than unconditionally re-enabling is what makes this safe to call from inside an
+ * exception handler, where I and F are already set and must stay that way.
+ *
+ * Caveat worth knowing: `msr cpsr_c` cannot change the control bits from User mode, so this is a
+ * no-op there. The kernel runs in System mode (crt0 sets it), so it holds for everything here; a
+ * User-mode application would need its own guard. */
+static inline unsigned psk_ints_off(void) {
+    unsigned prev, tmp;
+    __asm__ volatile("mrs %0, cpsr\n\torr %1, %0, #0xC0\n\tmsr cpsr_c, %1"
+                     : "=&r"(prev), "=&r"(tmp) : : "memory");
+    return prev;
+}
+static inline void psk_ints_restore(unsigned prev) {
+    __asm__ volatile("msr cpsr_c, %0" : : "r"(prev) : "memory");
+}
+
+/* Typed accessors for the live kernel state.
+ *
+ * ComFlags is read-modify-written from three contexts: SVC (the SWIs), IRQ (the docking sense) and
+ * FIQ (the card-link command engine). The ARM core sets the I bit on IRQ and SWI entry but leaves
+ * F CLEAR - only FIQ entry sets it - so the COM FIQ can land between the load and the store of
+ * either of the other two and have its own update silently overwritten by the outer context's
+ * writeback. Every read-modify-write therefore goes through psk_comflags_rmw, which runs the
+ * sequence with both interrupts masked. A plain read or a plain store of an aligned word is atomic
+ * and needs no guard. */
 static inline unsigned psk_comflags(void)            { return PSK_RAM32(PSK_COMFLAGS); }
 static inline void     psk_comflags_set(unsigned v)  { PSK_RAM32(PSK_COMFLAGS) = v; }
-static inline void     psk_comflags_or(unsigned m)   { PSK_RAM32(PSK_COMFLAGS) |= m; }
-static inline void     psk_comflags_clr(unsigned m)  { PSK_RAM32(PSK_COMFLAGS) &= ~m; }
+static inline unsigned psk_comflags_rmw(unsigned clear, unsigned set) {
+    unsigned prev = psk_ints_off();
+    unsigned v = (PSK_RAM32(PSK_COMFLAGS) & ~clear) | set;
+    PSK_RAM32(PSK_COMFLAGS) = v;
+    psk_ints_restore(prev);
+    return v;
+}
+static inline void     psk_comflags_or(unsigned m)   { psk_comflags_rmw(0, m); }
+static inline void     psk_comflags_clr(unsigned m)  { psk_comflags_rmw(m, 0); }
