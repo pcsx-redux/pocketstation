@@ -58,10 +58,15 @@ static inline volatile unsigned int   *psk_ram32_p(unsigned a) { __asm__("":"+r"
 /* ComFlags bits (PDA Kernel Spec "ComFlags", lines 707-714, + reverse-engineered internal bits).
  * The low documented bits are the application/PS-facing flags; bits 16-18 and 28-30 are kernel
  * internal state the command engine and IRQ paths maintain. */
-#define PSK_CF_FLASH_WRITE_EN (1u << 0)  /* flash-write enabled */
-#define PSK_CF_SPEAKER        (1u << 1)  /* speaker on */
-#define PSK_CF_LED            (1u << 2)  /* LED on */
-#define PSK_CF_IR_TRANSMIT    (1u << 3)  /* IR transmit */
+/* Bits 0-3 are ACTIVE-LOW device gates: 0 = enabled, 1 = DISABLED. They power up clear (all four
+ * devices enabled) and the kernel SETS them when the PDA is inserted into the PlayStation, because
+ * the PS owns the power budget from then on and re-enables a device only if the draw fits. So a
+ * docked device reports 01 01 01 01 through card command 0x5A, which is what silicon does. */
+#define PSK_CF_FLASH_WRITE_DIS (1u << 0) /* flash write disabled */
+#define PSK_CF_SPEAKER_DIS     (1u << 1) /* speaker output disabled */
+#define PSK_CF_LED_DIS         (1u << 2) /* LED light disabled */
+#define PSK_CF_IR_DIS          (1u << 3) /* infrared transmit disabled */
+#define PSK_CF_DEVICES_DIS     (0xFu)    /* all four device gates */
 #define PSK_CF_INSERTED       (1u << 8)  /* inserted into / removed from the PS (docking edge) */
 #define PSK_CF_COMM_POSSIBLE  (1u << 9)  /* communication with the PS is possible (docked + enabled) */
 #define PSK_CF_FILE_TRANSFER  (1u << 10) /* file-transfer in progress */

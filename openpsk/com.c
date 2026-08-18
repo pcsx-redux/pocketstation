@@ -223,6 +223,7 @@ static void func_exec_to_ps(void) {
     for (unsigned i = 0; i < len; i++) {
         if (com_exchange(d[i])) return;                 /* the data */
     }
+    if (com_exchange(0xFF)) return;                     /* end-of-transfer marker, then re-execute */
     h(0x11u);                                           /* post-data (mode 0x11) */
 }
 
@@ -249,6 +250,7 @@ static void func_exec_from_ps(void) {
         if (com_exchange(0)) return;
         d[i] = (unsigned char)com_rx();
     }
+    if (com_exchange(0xFF)) return;                     /* end-of-transfer marker, then re-execute */
     h(0x12u);                                           /* post-data (mode 0x12) */
 }
 
