@@ -325,6 +325,32 @@ void openpsk_comm_disable(void) {
     psk_comflags_clr(PSK_CF_COMM_POSSIBLE);         /* communication no longer possible */
 }
 
+/* Docking sense (INT bit 11). The dock line is an interrupt source that fires on BOTH edges; the
+ * live level in INT_INPUT says which one just happened, and the kernel owns the ComFlags that
+ * follow from it. irq.S calls this whenever the dock latch is among the pending requests, and main
+ * calls it once at boot so a device that powers up already docked is not left waiting for an edge.
+ *
+ * On INSERTION the PlayStation takes over the power budget, so all four device gates go to
+ * disabled (ComFlags bits 0-3, active low: set = disabled). An application must not assume it can
+ * drive the speaker, the LED, the IR or the flash while docked - the PS re-enables a device only
+ * if the current draw fits, which is exactly why the flags exist and why a docked PDA reports
+ * 01 01 01 01 through card command 0x5A. On REMOVAL the PDA owns its own power again and the gates
+ * go back to enabled. Either edge raises the insertion/removal event flag (ComFlags.8).
+ *
+ * The retail kernel splits this: the dock IRQ raises ComFlags.8 and the GUI's per-frame SWI 5
+ * (SenseAutoCom) consumes it and calls SetComOnOff. OpenPSK has no shell to run that poll yet, so
+ * the link is brought up and down here directly - the flag is still raised for whoever reads it. */
+void openpsk_dock_service(void) {
+    psk_comflags_or(PSK_CF_INSERTED);               /* an insertion/removal edge happened */
+    if (PSK_MMIO(INT_INPUT) & INT_DOCKED) {
+        psk_comflags_or(PSK_CF_DEVICES_DIS);        /* docked: the PS owns the power budget */
+        openpsk_comm_enable();
+    } else {
+        psk_comflags_clr(PSK_CF_DEVICES_DIS);       /* undocked: the PDA owns its devices again */
+        openpsk_comm_disable();
+    }
+}
+
 /* SWI 17 - Control PlayStation communication (PDA Kernel Spec, Table 3 #17). r0 != 0 enables the
  * card link (SetComOnOff(1)), r0 == 0 disables it. The retail kernel only completes the enable when
  * docked (it is driven from the docking sense); OpenPSK exposes the enable directly until the

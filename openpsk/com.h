@@ -12,3 +12,8 @@ void openpsk_comm_enable(void);
 
 /* Leave card-link communication mode (disable COM FIQ, reset COM hardware, clear ComFlags.9). */
 void openpsk_comm_disable(void);
+
+/* Docking sense - maintain the ComFlags that follow from an insertion/removal edge and bring the
+ * card link up or down. Called from irq.S when the dock latch (INT bit 11) is pending, and once at
+ * boot to pick up a device that is already docked. */
+void openpsk_dock_service(void);

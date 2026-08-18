@@ -41,17 +41,17 @@ void main(void) {
     unsigned t0 = psk_swi_get_bcd_time();
     vram[2] = t0;
 
-    /* Arm the wake path: enable the RTC interrupt and unmask IRQs at the CPU. */
-    psk_int_unmask(INT_RTC);
+    /* Arm the wake path: the RTC tick and the dock line, then unmask IRQs and FIQs at the CPU. */
+    psk_int_unmask(INT_RTC | INT_DOCKED);
     psk_enable_irq();
+    psk_enable_fiq();
 
     /* Answer the PlayStation. A docked PocketStation serves card-link commands out of its FIQ
-     * handler, so the card link is enabled here and FIQs unmasked at the CPU: the device sleeps in
-     * the loop below and the COM FIQ wakes it for each command. (The retail kernel reaches this
-     * state through the docking sense + SWI 05h; OpenPSK has no docking state machine yet, so the
-     * link is enabled unconditionally at boot.) */
-    openpsk_comm_enable();
-    psk_enable_fiq();
+     * handler: the device sleeps in the loop below and the COM FIQ wakes it for each command. The
+     * docking sense (IRQ 11 -> openpsk_dock_service) brings the link up and down and maintains the
+     * ComFlags the PS reads; call it once here so a device that powers up already docked does not
+     * sit waiting for an edge that has already been and gone. */
+    openpsk_dock_service();
 
     unsigned wakes = 0;
     for (;;) {
