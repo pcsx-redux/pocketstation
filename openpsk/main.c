@@ -17,6 +17,7 @@
  *   row 6 = wakes   (number of sleep/wake cycles)         -> increments ~once per second
  */
 
+#include "com.h"
 #include "hardware.h"
 #include "swi.h"
 
@@ -43,6 +44,14 @@ void main(void) {
     /* Arm the wake path: enable the RTC interrupt and unmask IRQs at the CPU. */
     psk_int_unmask(INT_RTC);
     psk_enable_irq();
+
+    /* Answer the PlayStation. A docked PocketStation serves card-link commands out of its FIQ
+     * handler, so the card link is enabled here and FIQs unmasked at the CPU: the device sleeps in
+     * the loop below and the COM FIQ wakes it for each command. (The retail kernel reaches this
+     * state through the docking sense + SWI 05h; OpenPSK has no docking state machine yet, so the
+     * link is enabled unconditionally at boot.) */
+    openpsk_comm_enable();
+    psk_enable_fiq();
 
     unsigned wakes = 0;
     for (;;) {

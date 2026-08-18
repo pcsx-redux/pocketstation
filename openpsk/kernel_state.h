@@ -19,6 +19,7 @@
  *   0xCA  func-value byte           - PS_ChangeFuncValue (card cmd 0x50) stores its byte here
  *   0xCE  selection byte            - SWI 21 get/set, gated on the active application block number
  *   0xCF  RTC century byte          - the 2-digit-century the RTC hardware does not store
+ *   0xD0  current dir_index          (u16) - the running file, 0 = the GUI; card cmd 0x5A reports it
  *   0xD2  active application block#  (u16) - SWI 8 set / SWI 22 get
  *   0xD4  application argument       (u32) - SWI 8
  *   0xD8  user-interface status struct - SWI 19 returns a pointer here
@@ -46,6 +47,7 @@ static inline volatile unsigned int   *psk_ram32_p(unsigned a) { __asm__("":"+r"
 #define PSK_FUNCVAL_BYTE 0xCAu  /* PS_ChangeFuncValue target */
 #define PSK_SELECT_BYTE  0xCEu  /* SWI 21 get/set */
 #define PSK_CENTURY_BYTE 0xCFu  /* RTC century (BCD), e.g. 0x20 */
+#define PSK_CUR_DIR_INDEX 0xD0u /* u16 dir_index of the running file (0 = the GUI, no file) */
 #define PSK_APP_BLOCK    0xD2u  /* u16 active app block number */
 #define PSK_APP_ARG      0xD4u  /* u32 app argument */
 #define PSK_UI_STRUCT    0xD8u  /* SWI 19 returns this pointer */

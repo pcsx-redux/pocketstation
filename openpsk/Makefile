@@ -43,7 +43,7 @@ swi_handlers.o: swi_handlers.c hardware.h
 syscalls.o: syscalls.c hardware.h kernel_state.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-main.o: main.c hardware.h swi.h
+main.o: main.c hardware.h swi.h com.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(TARGET).elf: $(OBJS) openpsk.ld

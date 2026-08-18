@@ -19,9 +19,10 @@
  *   - com_exchange(tx) loads TX, arms the link, and waits for the exchange to complete (bailing if the
  *     device is undocked or the link errors); the caller then reads COM_DATA for the received byte.
  *
- * Deferred to the next chunk (they need the application-FUNC dispatch / file directory): the PDA
- * commands 0x50 and 0x58-0x5F, including the FUNC execute handshake (0x5B/0x5C) that is the FF8
- * Chocobo World sync.
+ * On top of the card protocol it serves the PDA-specific commands: the state reports 0x58 (version)
+ * and 0x5A (dir_index / ComFlags / serial / date / time), and the FUNC execute handshake 0x5B/0x5C
+ * that is the FF8 Chocobo World sync. Deferred to the next chunk (they need the application-FUNC
+ * dispatch / file directory): 0x50, 0x59 and 0x5D-0x5F.
  */
 #include "hardware.h"
 #include "kernel_state.h"
@@ -111,6 +112,58 @@ static void card_getid(void) {
     }
 }
 
+/* ---- PDA state commands (0x58 / 0x5A) -----------------------------------------------------------
+ * Neither takes the 0x5A 0x5D card id-ack: after the FLAG byte the device answers with a length
+ * byte and then that many payload bytes, and stops driving the bus. Both are read-only reports of
+ * kernel state, so they are the cheapest thing the PlayStation can ask a docked PDA. */
+
+extern unsigned swi_handler_read_serial(void);
+extern unsigned swi_handler_get_bcd_date(void);
+extern unsigned swi_handler_get_bcd_time(void);
+
+/* Card command 0x58 - "get an ID or version value or so" (psx-spx). Three fixed bytes: the length
+ * of what follows (0x02) and two version values, which hardware reports as 01 01. This command is
+ * also the PocketStation-vs-plain-card discriminator - a Sony Memory Card does not implement it. */
+static void card_get_version(void) {
+    static const unsigned char ver[] = { 0x02, 0x01, 0x01 };
+    for (unsigned i = 0; i < sizeof(ver); i++) {
+        if (com_exchange(ver[i])) return;
+    }
+}
+
+/* Card command 0x5A - get dir_index, ComFlags, F_SN, date and time. One 0x12-byte block, in the
+ * order psx-spx documents (and silicon confirms): the current dir_index big-endian, then FOUR
+ * ComFlags bits expanded one-per-byte in the order 0,1,3,2 (the PS reads flash-write / speaker /
+ * IR / LED that way round), then the 32-bit factory serial little-endian, then BCD day / month /
+ * year / century, then BCD second / minute / hour / day-of-week.
+ *
+ * The date and time words are laid out byte-for-byte in that order already (GetBcdDate returns
+ * day,month,year,century and GetBcdTime returns sec,min,hour,dow from low byte up), so both go out
+ * little-endian exactly like the serial. */
+static void card_get_state(void) {
+    unsigned dir   = PSK_RAM16(PSK_CUR_DIR_INDEX);
+    unsigned flags = psk_comflags();
+    unsigned sn    = swi_handler_read_serial();
+    unsigned date  = swi_handler_get_bcd_date();
+    unsigned time  = swi_handler_get_bcd_time();
+
+    unsigned char b[19];
+    b[0]  = 0x12;                               /* length of the 18 bytes that follow */
+    b[1]  = (unsigned char)(dir >> 8);          /* dir_index.bit8-15 */
+    b[2]  = (unsigned char)dir;                 /* dir_index.bit0-7  */
+    b[3]  = (unsigned char)((flags >> 0) & 1u); /* ComFlags.0 - flash write enabled */
+    b[4]  = (unsigned char)((flags >> 1) & 1u); /* ComFlags.1 - speaker */
+    b[5]  = (unsigned char)((flags >> 3) & 1u); /* ComFlags.3 - IR transmit */
+    b[6]  = (unsigned char)((flags >> 2) & 1u); /* ComFlags.2 - LED */
+    for (int i = 0; i < 4; i++) b[7  + i] = (unsigned char)(sn   >> (8 * i));
+    for (int i = 0; i < 4; i++) b[11 + i] = (unsigned char)(date >> (8 * i));
+    for (int i = 0; i < 4; i++) b[15 + i] = (unsigned char)(time >> (8 * i));
+
+    for (unsigned i = 0; i < sizeof(b); i++) {
+        if (com_exchange(b[i])) return;
+    }
+}
+
 /* ---- FUNC execute handshake (card commands 0x5B / 0x5C) - the PS<->PDA application sync ----------
  * The PlayStation invokes a numbered function on the PDA and exchanges a data block with it. Command
  * 0x5B transfers PS<-PDA (the PDA produces data), 0x5C transfers PS->PDA (the PDA consumes data).
@@ -125,8 +178,6 @@ static void card_getid(void) {
  * sync is then validated against a real capture from the hardware in the rig. */
 typedef struct { unsigned ptr; unsigned len; } func_result;
 
-extern unsigned swi_handler_get_bcd_date(void);
-extern unsigned swi_handler_get_bcd_time(void);
 
 /* FUNC 0x00 - read date/time. Pre-data fills the sector buffer with {date:u32, time:u32} (8 bytes,
  * the same {0x368 date, 0x390 time} the retail kernel returns); post-data is a no-op. */
@@ -232,13 +283,18 @@ void openpsk_com_service(void) {
         else if (cmd == 0x57) card_write();
         else                  card_getid();
         psk_comflags_clr(PSK_CF_CMD_IN_PROGRESS);
+    } else if (cmd == 0x58 || cmd == 0x5A) {        /* PDA state reports (no 5A/5D ack) */
+        psk_comflags_or(PSK_CF_CMD_IN_PROGRESS);
+        if (cmd == 0x58) card_get_version();
+        else             card_get_state();
+        psk_comflags_clr(PSK_CF_CMD_IN_PROGRESS);
     } else if (cmd == 0x5B || cmd == 0x5C) {        /* FUNC execute (no 5A/5D ack, handler runs directly) */
         psk_comflags_or(PSK_CF_CMD_IN_PROGRESS);
         if (cmd == 0x5B) func_exec_to_ps();
         else             func_exec_from_ps();
         psk_comflags_clr(PSK_CF_CMD_IN_PROGRESS);
     }
-    /* else: other PDA commands (0x50, 0x58-0x5A, 0x5D-0x5F) - next chunk. */
+    /* else: the remaining PDA commands (0x50, 0x59, 0x5D-0x5F) - next chunk. */
 }
 
 /* Enter card-link communication mode: initialize the COM hardware, unmask the COM FIQ, and set
