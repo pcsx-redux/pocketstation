@@ -4,7 +4,7 @@
 # into the emulator via PCSX::PocketStation::setKernel() in place of the retail kernel.bin.
 #
 # Kept out of the host Redux build by EXTENSION: this tree uses .c/.S only, and the host Makefile
-# discovers sources via rwildcard(src/,*.cc). Build standalone with `make -C src/arm/openpsk`.
+# discovers sources via rwildcard(src/,*.cc). Build standalone with `make -C openpsk`.
 
 PREFIX  ?= arm-none-eabi
 CC       = $(PREFIX)-gcc
