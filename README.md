@@ -8,7 +8,7 @@ memory-card slot. PCSX-Redux uses it as a submodule under `src/pocketstation`.
 
 The ARM7TDMI core, memory map, I/O registers and LCD are based on
 **PocketBoyAdvance** by wheremyfoodat (https://github.com/wheremyfoodat), who
-donated it to PCSX-Redux. Huge thanks for writing a clean ARM7TDMI core and
+donated it to PCSX-Redux under GPL-2.0-or-later. Huge thanks for writing a clean ARM7TDMI core and
 PocketStation I/O map and for making it available.
 
 What changed since the donation:
