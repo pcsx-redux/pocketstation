@@ -35,10 +35,18 @@ int main(void) {
     const char *path = bios_path();
 
     setvbuf(stdout, NULL, _IONBF, 0);
+    {
+        FILE *f = fopen(path, "rb");
+        if (!f) {
+            printf("bu_test: no BIOS at %s, skipping\n", path);
+            return SKIP_EXIT_CODE;
+        }
+        fclose(f);
+    }
     m = mock_ps1_open(path, NULL);
     if (!m) {
-        printf("bu_test: no usable BIOS at %s (or COM never enabled), skipping\n", path);
-        return SKIP_EXIT_CODE;
+        printf("RESULT FAIL mock_ps1_open: the kernel at %s never enabled the card link\n", path);
+        return 1;
     }
     printf("bu_test: BIOS %s, communication enabled\n", path);
 

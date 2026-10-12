@@ -220,7 +220,9 @@ public:
     void comBeginTransfer(u8 in) {
         if (!com.txFresh) com.hostUnderruns++;
         com.txFresh = false;
-        com.txShifted = com.tx;
+        // COM_MODE bit 0 is the data output enable: with it clear the line idles high, so the PS1
+        // reads 0xFF whatever COM_DATA holds (the kernel clears it at the end of every command).
+        com.txShifted = (com.mode & 1) ? com.tx : 0xFF;
         com.rx = in;
         com.rxReady = true;
         com.acked = false;
