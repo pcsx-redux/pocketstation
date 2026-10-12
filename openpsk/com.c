@@ -257,16 +257,33 @@ static void func_exec_from_ps(void) {
 /* COM FIQ service body (called from fiq.S on INT bit 6). Runs one whole card command. Gated on
  * ComFlags.9 (communication possible) just like the retail engine - if the link is not enabled and
  * docked, do nothing. */
+/* Idle state of the link between commands: both COM_STAT2 events cleared, and COM_CTRL1 = 2 so
+ * the next select of the slot (event bit 1) raises the COM FIQ. The PS1 selects ~60us before its
+ * first byte completes, so the handler starts ahead of the byte, as the retail kernel's does. */
+static void com_arm_for_select(void) {
+    PSK_MMIO(COM_CTRL1) = 0;
+    PSK_MMIO(COM_CTRL2) = 3;
+    PSK_MMIO(COM_CTRL1) = 2;
+}
+
+static void com_command(void);
+
 void openpsk_com_service(void) {
-    if (!(psk_comflags() & PSK_CF_COMM_POSSIBLE)) return;
+    if (psk_comflags() & PSK_CF_COMM_POSSIBLE) com_command();
+    com_arm_for_select();
+}
+
+/* One whole card command, from the select to its last byte. */
+static void com_command(void) {
     PSK_MMIO(COM_CTRL2) = 1;
     PSK_MMIO(COM_CTRL1) = 3;
 
-    /* Wait (bounded) for the first byte the FIQ was raised for. */
-    int tries = 30;
+    /* Wait (bounded) for the first byte; the FIQ was raised by the select, ahead of it. A release
+     * of /SEL (COM_STAT1 bit 1) before any byte means the PS1 talked to the pad of this port. */
+    int tries = 2000;
     while (tries > 0) {
         if (!(PSK_MMIO(INT_INPUT) & INT_DOCKED)) return;
-        if (PSK_MMIO(COM_STAT1) & 2u) { tries--; continue; }
+        if (PSK_MMIO(COM_STAT1) & 2u) return;
         if (PSK_MMIO(COM_STAT2) & 1u) break;
         tries--;
     }
@@ -306,9 +323,8 @@ void openpsk_com_service(void) {
  * chunk. After this the caller must have FIQs enabled at the CPU (psk_enable_fiq). */
 void openpsk_comm_enable(void) {
     PSK_MMIO(COM_MODE) = 2;
-    PSK_MMIO(COM_CTRL1) = 0;
-    PSK_MMIO(COM_CTRL2) = 3;
     PSK_MMIO(COM_DATA) = 0xFF;
+    com_arm_for_select();
     PSK_MMIO(INT_MASK_SET) = INT_COM;               /* enable the COM FIQ (bit 6) */
     psk_comflags_or(PSK_CF_COMM_POSSIBLE);
 }
