@@ -114,19 +114,6 @@ class PocketStation {
     ::CPU m_cpu;
 
     uint32_t m_buttons = 0;  // latched button mask, reflected into INT bits 0..4 per frame.
-
-    // ---- TEMPORARY SCAFFOLDING ----------------------------------------------------------
-    // The donor's Qt render() loop spoon-fed the kernel fake timer IRQs every frame so it
-    // would boot without real timers (which never tick yet). With the Qt loop gone, we
-    // reproduce that injection here on a cycle cadence. REMOVE ALL OF THIS once real
-    // Timer0/Timer1/Timer2 + the RTC square wave land; the kernel must then boot on real
-    // hardware events, not on a stopwatch.
-    static constexpr uint32_t kArmClock = 3997696;          // donor's default clock (Hz).
-    static constexpr uint32_t kCyclesPerFrame = kArmClock / 60;  // ~66628 cycles ~= one 60Hz frame.
-    uint64_t m_frameAccum = 0;  // cycles accumulated toward the next scaffolding "frame".
-    int m_poop = 1;             // donor's INT7 alternation counter (named to match the donor).
-    void frameScaffolding();    // fires the fake timer IRQs + reflects buttons; called per frame.
-    // -------------------------------------------------------------------------------------
 };
 
 }  // namespace PocketStation

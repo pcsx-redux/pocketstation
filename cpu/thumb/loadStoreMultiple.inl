@@ -5,11 +5,17 @@ void Thumb_STMIA(u32 instruction) {
     u32 sp = registers[rb];
 
     if ((instruction & 0xff) == 0) Helpers::panic("Thumb stmia rb! { rlist } with empty rlist");
-    if (instruction & (1 << rb)) Helpers::panic("Thumb stmia rb! { rlist } with rb in rlist");
+
+    // ARM7TDMI with rb in the list (GBATEK, "ARM Opcodes: Memory: Block Data Transfer"): the base
+    // is stored unchanged if it is the lowest register in the list, otherwise the written-back
+    // base is stored.
+    const auto rlist = instruction & 0xff;
+    const u32 finalBase = sp + 4 * std::popcount(u32(rlist));
+    const bool rbFirst = (rlist & ((1 << rb) - 1)) == 0;
 
     for (int i = 0; i < 8; i++) {
         if (instruction & (1 << i)) {
-            write32(sp, registers[i]);
+            write32(sp, (i == rb && !rbFirst) ? finalBase : registers[i]);
             sp += 4;
         }
     }
@@ -23,7 +29,6 @@ void Thumb_LDMIA(u32 instruction) {
     u32 sp = registers[rb];
 
     if ((instruction & 0xff) == 0) Helpers::panic("Thumb ldmia rb! { rlist } with empty rlist");
-    if (instruction & (1 << rb)) Helpers::panic("Thumb ldmia rb! { rlist } with rb in rlist");
 
     for (int i = 0; i < 8; i++) {
         if (instruction & (1 << i)) {
@@ -32,7 +37,9 @@ void Thumb_LDMIA(u32 instruction) {
         }
     }
 
-    registers[rb] = sp; // Writeback sp
+    // With rb in the list the loaded value wins and there is no writeback (the assembler spells
+    // this form without the "!"). The retail kernel's sleep path runs ldmia r3, {r2, r3}.
+    if (!(instruction & (1 << rb))) registers[rb] = sp; // Writeback sp
     registers[15] += 2; // Fake pipeline
 }
 
