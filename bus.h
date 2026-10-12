@@ -144,68 +144,105 @@ public:
     std::vector<u8> bios;
 
     // ---- COM link (card slot SPI bridge to the PSX) ------------------------------------------
-    // The PS1<->card link is bidirectional SPI, master = PS1. COM_DATA is a single shift register
-    // each direction (NOT a queue): rx = the last byte clocked in from the PS1 (kernel reads it via
-    // COM_DATA), tx = the byte the kernel has loaded for the PS1 (host reads it on the next
-    // exchange = the inherent one-transaction SPI pipeline delay). A FIFO is WRONG here: the kernel
-    // does not read every incoming byte (it ignores the dummy bytes during the data phase), so a
-    // queue would accumulate unread bytes and mis-align the kernel's later address reads. On real
-    // hardware an unread RX byte is simply overwritten by the next exchange.
-    // The kernel handles a whole bu_cmd in one FIQ-6 entry, busy-polling
-    // COM_STAT2.ready (set when the host completes a transfer, cleared when the kernel loads the
-    // next TX) to pace itself to one byte per host exchange.
+    // The register model below follows com.c/com.h of mentalfoundry/Pokket (MIT, Copyright (c)
+    // 2026 Darien Liu), whose behaviour was traced against the retail kernel and logged on real
+    // hardware (screen 15 of their pk_timing_bench). The card protocol itself lives in the kernel;
+    // this block only models the byte path and the handshake lines.
+    //
+    //   COM_MODE  bit0 data output enable, bit1 drive /ACK low (the kernel's per-byte acknowledge).
+    //   COM_STAT1 bit0 a byte arrived (cleared by a COM_DATA read or by the acknowledge),
+    //             bit1 the PS1 has /SEL released. Bit 1 is a LEVEL, held for as long as /SEL is
+    //             released; the kernel's end-of-command wait polls it, and nothing else ends that
+    //             wait. Reading the register does not clear it, the next select does.
+    //   COM_DATA  read: the byte from the PS1. write: the reply for the NEXT exchange. A single
+    //             shift register each way, never a queue: one exchange shifts the PS1 byte in and
+    //             the previously loaded reply out, so the PS1 sees byte N during exchange N+1.
+    //   COM_CTRL1 bits0-1 select which COM_STAT2 events are visible and request INT_COM (FIQ-6).
+    //   COM_STAT2 sticky events: bit0 Ready (a byte completed), bit1 the PS1 selected the device.
+    //             A read gives events & CTRL1. A read of COM_DATA does not clear Ready.
+    //   COM_CTRL2 a write of 1 to a bit clears that COM_STAT2 event.
+    // INT_COM is a level, events & CTRL1 != 0; the latch is set when it rises and cleared when it
+    // falls. The kernel waits with CTRL1 = 2, so its FIQ starts at the select, before the first
+    // byte completes, and then polls Ready per byte. A byte that completes at the very instant of
+    // the select is cleared by the kernel's CTRL2 = 1 and gets no answer: the host must let the
+    // ARM7 run between the select and the first byte.
     struct Com {
-        u8 rx = 0xFF;          // MOSI shift reg: last byte from PS1 (kernel reads via COM_DATA).
-        u8 tx = 0xFF;          // MISO shift reg: byte kernel loaded (host reads on next exchange).
-        u32 mode = 0;          // COM_MODE
-        u32 ctrl1 = 0;         // COM_CTRL1
-        u32 ctrl2 = 0;         // COM_CTRL2
-        bool ready = false;    // COM_STAT2.bit0: a byte transfer completed (kernel TX-pacing flag).
-        bool txFresh = false;  // kernel loaded a new TX since the last exchange (else host underrun).
-        bool error = false;    // COM_STAT1.bit1.
-        bool cmdActive = false;  // a bu_cmd FIQ is in progress (don't re-fire FIQ-6 per byte).
-        u32 hostUnderruns = 0;   // exchanges where the kernel had no fresh reply (pipeline metric).
-        void reset() {
-            rx = tx = 0xFF;
-            mode = ctrl1 = ctrl2 = 0;
-            ready = txFresh = error = cmdActive = false;
-            hostUnderruns = 0;
-        }
+        u32 mode = 0;           // COM_MODE
+        u32 ctrl1 = 0;          // COM_CTRL1
+        u32 ctrl2 = 0;          // COM_CTRL2
+        u8 rx = 0;              // byte from the PS1 (COM_DATA read)
+        u8 tx = 0xFF;           // reply loaded by the kernel for the next exchange (COM_DATA write)
+        u8 txShifted = 0xFF;    // the byte that went out during the exchange in progress
+        bool rxReady = false;   // COM_STAT1.0
+        bool acked = false;     // the kernel drove /ACK low for the exchange in progress
+        u32 stat2Events = 0;    // COM_STAT2 sticky events (bit0 Ready, bit1 selected)
+        bool irqLevel = false;  // INT_COM as last computed
+        bool selected = false;  // /SEL held by the PS1
+        bool selReleased = false;  // COM_STAT1.1
+        bool txFresh = false;   // kernel loaded a reply since the last exchange (diagnostic only)
+        u32 hostUnderruns = 0;  // exchanges that found no fresh reply loaded (diagnostic only)
+        void reset() { *this = Com{}; }
     } com;
 
     bool comTrace = false;  // when set, cpu.cc/bus.cc log every COM/INT reg access with PC.
     u32 curPC = 0;          // last instruction fetch PC; CPU stashes it when comTrace is on.
 
-    // Host (PS1) side of one SPI byte exchange. Returns the byte the PocketStation had loaded
-    // BEFORE this exchange (one-transaction pipeline delay), pushes the incoming byte for the
-    // kernel, and arms the COM FIQ if no command is already running. Non-blocking: does NOT run
-    // the ARM7 (the catch-up owns arm7.step()).
-    u8 comExchange(u8 in) {
-        // One SPI byte exchange. The host receives the byte the kernel had loaded (tx); if the
-        // kernel hasn't loaded a fresh reply since the last exchange, that's an underrun (a couple
-        // at the pipeline start is expected; sustained underruns mean the catch-up isn't giving
-        // the ARM7 enough cycles per byte). The incoming byte overwrites the rx shift register, and
-        // the completed transfer sets ready (the kernel's pacing signal).
-        if (!com.txFresh) com.hostUnderruns++;
-        const u8 out = com.tx;
-        com.txFresh = false;
-        com.rx = in;
-        com.ready = true;
-        if (!com.cmdActive) {
-            com.cmdActive = true;
-            requestInterrupt(6);  // FIQ-6 (COM): start of a new command.
+    // Recomputes INT_COM (FIQ-6) from the COM_STAT2 events and COM_CTRL1.
+    void comUpdateIrq() {
+        const bool level = (com.stat2Events & com.ctrl1 & 3u) != 0;
+        if (level == com.irqLevel) return;
+        com.irqLevel = level;
+        if (level) {
+            irqFlags |= 1u << 6;
+            irqLatch |= (1u << 6) & irqMask;
+        } else {
+            irqFlags &= ~(1u << 6);
+            irqLatch &= ~(1u << 6);
         }
-        return out;
     }
 
-    // Called by the host when the card is (de)selected. Deselect ends any in-progress command so
-    // the next byte re-arms FIQ-6, and lets the kernel see /SEL go inactive.
-    void comDeselect() {
-        com.cmdActive = false;
-        com.ready = false;
-        com.txFresh = false;
-        com.rx = com.tx = 0xFF;
+    // The /SEL line. Holding it starts a command (COM_STAT2 bit 1); releasing it ends one
+    // (COM_STAT1 bit 1, held until the next select).
+    void comSetSelected(bool selected) {
+        if (com.selected && !selected) {
+            com.selReleased = true;
+        } else if (!com.selected && selected) {
+            com.selReleased = false;
+            com.stat2Events |= 2u;
+            comUpdateIrq();
+        }
+        com.selected = selected;
     }
+
+    // One byte from the PS1. The reply for this exchange is the byte the kernel loaded before it
+    // (comTakeReply). Non-blocking: the ARM7 must run afterwards for the kernel to take the byte,
+    // load the next reply and acknowledge (comAcked).
+    void comBeginTransfer(u8 in) {
+        if (!com.txFresh) com.hostUnderruns++;
+        com.txFresh = false;
+        com.txShifted = com.tx;
+        com.rx = in;
+        com.rxReady = true;
+        com.acked = false;
+        com.stat2Events |= 1u;
+        comUpdateIrq();
+    }
+    bool comAcked() const { return com.acked; }
+    u8 comTakeReply() const { return com.txShifted; }
+    void comEndTransfer() {
+        com.rxReady = false;
+        com.acked = false;
+    }
+
+    // Compatibility wrapper: select if needed, then one exchange. Returns the reply byte.
+    u8 comExchange(u8 in) {
+        if (!com.selected) comSetSelected(true);
+        comBeginTransfer(in);
+        return com.txShifted;
+    }
+
+    // /SEL released: ends the command in progress.
+    void comDeselect() { comSetSelected(false); }
 
     // Docking: INT_INPUT.11 reflects dock status (level), and a transition fires IRQ-11 so the
     // kernel's IOP handler runs (which, via the GUI's per-frame SWI 05h, enables COM).

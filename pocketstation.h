@@ -67,12 +67,21 @@ class PocketStation {
     uint64_t rtcEdges() const { return m_bus.rtcEdgeCount; }
 
     // ---- COM link (PS1 card-slot bridge) ----------------------------------------------------
-    // One bidirectional SPI byte exchange from the host (PS1/SIO) side. Returns the byte the
-    // device had loaded before this exchange (one-transaction pipeline delay), queues the
-    // incoming byte for the kernel, and arms the COM FIQ. Non-blocking: the caller must run the
-    // ARM7 (via the cycle-delta catch-up / runCycles) between exchanges for the kernel to react.
+    // The PS1 side of the card link, per exchange: hold /SEL (comSetSelected(true)) at the start of
+    // a command and let the ARM7 run before the first byte (the kernel's FIQ starts at the select);
+    // comBeginTransfer(byte); run the ARM7 until comAcked() or a timeout (no acknowledge = no card,
+    // or the last byte of a command); comTakeReply() is the byte that went out during that exchange
+    // (the reply the kernel loaded one exchange earlier); comEndTransfer(). Release /SEL
+    // (comSetSelected(false)) after the command and run the ARM7 so the kernel leaves its
+    // end-of-command wait.
+    void comSetSelected(bool selected) { m_bus.comSetSelected(selected); }
+    void comBeginTransfer(uint8_t in) { m_bus.comBeginTransfer(in); }
+    bool comAcked() const { return m_bus.comAcked(); }
+    uint8_t comTakeReply() const { return m_bus.comTakeReply(); }
+    void comEndTransfer() { m_bus.comEndTransfer(); }
+    // Shorthand for select-if-needed + comBeginTransfer; returns comTakeReply().
     uint8_t comExchange(uint8_t in) { return m_bus.comExchange(in); }
-    // Card (de)select edge from the SIO. Deselect ends an in-progress command.
+    // /SEL released.
     void comDeselect() { m_bus.comDeselect(); }
     // Dock state: drives INT_INPUT.11 and fires IRQ-11 on a transition (kernel enables COM).
     void setDocked(bool docked) { m_bus.setDocked(docked); }
@@ -85,12 +94,17 @@ class PocketStation {
     bool halted() const { return m_bus.halted; }
 
     void setComTrace(bool on) { m_bus.comTrace = on; }   // log every COM/INT reg access with PC.
-    uint32_t comUnderruns() const { return m_bus.com.hostUnderruns; }  // MISO-empty-at-exchange count.
+    uint32_t comUnderruns() const { return m_bus.com.hostUnderruns; }  // exchanges with no fresh reply loaded.
 
     // Diagnostics for reversing the docking/COM-enable handshake.
     uint32_t peekComFlags() const { return *reinterpret_cast<const uint32_t*>(&m_bus.wram[0xC0]); }
     uint32_t peekIrqMask() const { return m_bus.irqMask; }
     uint32_t peekIntInput() const { return m_bus.irqFlags; }
+
+    // ---- test harness access ----------------------------------------------------------------
+    uint8_t* wramData() { return m_bus.wram.data(); }  // 2 KiB work RAM (kernel state at 0x00-0x1FF).
+    uint8_t* flashDataMutable() { return m_bus.flash.data.data(); }
+    uint32_t flashSerial() { return (uint32_t(m_bus.read16Slow(0x06000302)) << 16) | m_bus.read16Slow(0x06000300); }
 
   private:
     // Init order matters: LCD first, then Bus(lcd), then CPU(bus). Members are constructed

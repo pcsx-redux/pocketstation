@@ -14,6 +14,10 @@ PocketStation I/O map and for making it available.
 What changed since the donation:
 
 - Dropped the standalone Qt front-end; the host draws the LCD.
+- Took the COM link register model (the /SEL level, the per-byte /ACK, the
+  COM_STAT2 events behind INT_COM) from mentalfoundry's
+  [Pokket](https://github.com/mentalfoundry/Pokket) core, MIT, Copyright (c)
+  2026 Darien Liu. Its bus-level tests run here, see `tests/pokket/`.
 - Restructured into a flat module that drops into the normal Redux build.
 - Replaced the boot scaffolding (a patched kernel byte, hardcoded interrupt
   cadences) with timer, RTC, clock and COM modeling, so the retail kernel runs
