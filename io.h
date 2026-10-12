@@ -21,10 +21,13 @@ enum {
     INT_MASK_CLR = 0x0A00000C,
     INT_ACK = 0x0A000010,
     T0_RELOAD = 0x0A800000,
+    T0_COUNT = 0x0A800004,
     T0_MODE = 0x0A800008,
     T1_RELOAD = 0x0A800010,
+    T1_COUNT = 0x0A800014,
     T1_MODE = 0x0A800018,
     T2_RELOAD = 0x0A800020,
+    T2_COUNT = 0x0A800024,
     T2_MODE = 0x0A800028,
     CLK_MODE = 0x0B000000,
     CLK_STOP = 0x0B000004,  // write bit0=1 -> stop the CPU clock (sleep) until a wake IRQ

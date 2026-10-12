@@ -37,35 +37,12 @@ void PocketStation::reset() {
     m_cpu.reset();
     m_bus.reset();
     m_lcd.reset();
-    m_frameAccum = 0;
-    m_poop = 1;
     m_buttons = 0;  // bus.reset() clears irqFlags, so the reflected button levels start clear too.
 }
 
 void PocketStation::runCycles(uint64_t armCycles) {
-    for (uint64_t i = 0; i < armCycles; i++) {
-        m_cpu.step();
-        // Scaffolding cadence: every ~66628 steps == one 60Hz frame, inject the fake IRQs.
-        // Skip it while the core is halted: CLK_STOP stops Timer0-2 (psx-spx), so the fake timer
-        // IRQs must NOT fire during sleep -- only the RTC (ticked in CPU::step) wakes the device.
-        if (++m_frameAccum >= kCyclesPerFrame) {
-            m_frameAccum = 0;
-            if (!m_bus.halted) frameScaffolding();
-        }
-    }
+    for (uint64_t i = 0; i < armCycles; i++) m_cpu.step();
 }
-
-// ---- TEMPORARY SCAFFOLDING --------------------------------------------------------------
-// Faithful reproduction of the donor render() IRQ injection. The kernel boots only because
-// it is fed these on a stopwatch; remove once real timers + RTC square wave exist.
-void PocketStation::frameScaffolding() {
-    if (++m_poop & 1) m_bus.requestInterrupt(7);  // fake Timer0 ~30Hz.
-    m_bus.requestInterrupt(13);                   // fake Timer2 FIQ ~60Hz.
-    // NOTE: button -> INT_INPUT reflection is NOT done here anymore. It lives in setButtons()
-    // (edge-driven) so it works while the core is halted (CLK_STOP sleep) -- frameScaffolding is
-    // skipped during sleep, so reflecting here could never wake a sleeping device on a Fire press.
-}
-// -----------------------------------------------------------------------------------------
 
 void PocketStation::setButtons(uint32_t mask) {
     // Reflect the 5 buttons (bits 0..4 = Fire/Right/Left/Down/Up) into INT_INPUT as raw signal
@@ -74,7 +51,7 @@ void PocketStation::setButtons(uint32_t mask) {
     // unmasked); a release (1->0) drops the level only. INT_ACK preserves these level bits (like
     // the dock/RTC levels), so the kernel acking a Fire IRQ does not falsely "release" a held key.
     //
-    // Doing this HERE -- not in frameScaffolding(), which is skipped while halted -- is what lets a
+    // Doing this on the press edge, which runs while the core is halted, is what lets a
     // Fire press wake a sleeping (CLK_STOP) device: the press latches IRQ-0, satisfying CPU::step()'s
     // wake condition (irqLatch & irqMask). psx-spx: buttons are polled directly from INT_INPUT,
     // except in Sleep mode where the Fire-button IRQ wakes the device. Edge-detecting against

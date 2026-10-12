@@ -145,6 +145,7 @@ void CPU::step() {
         }
     }
 
+    bus.tickTimers();  // the timers run off the system clock, so they stop with it while halted.
     pollInterrupts();
 
     if (!cpsr.thumb)

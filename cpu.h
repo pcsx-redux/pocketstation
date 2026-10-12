@@ -1,4 +1,5 @@
 #pragma once
+#include <bit>
 #include <array>
 #include <cassert>
 #include "types.h"

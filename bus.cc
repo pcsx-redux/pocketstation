@@ -117,6 +117,17 @@ void Bus::rtcAdvanceOneSecond() {
     if (rtc.years > 0x99) rtc.years = 0;
 }
 
+void Bus::tickTimers() {
+    // Timer0 -> IRQ 7, Timer1 -> IRQ 8, Timer2 -> FIQ 13. An expiry is a pulse into the latch, not a
+    // level in INT_INPUT, and it latches whether or not the source is enabled, so enabling a
+    // channel with an expiry pending dispatches it at once (Pokket core/src/intc.c: HOLD latches
+    // every asserted source, ENABLE only gates delivery).
+    static constexpr int kLines[3] = {7, 8, 13};
+    for (int i = 0; i < 3; i++) {
+        if (timers[i].tick()) irqLatch |= 1u << kLines[i];
+    }
+}
+
 void Bus::requestInterrupt(int bit) {
     const u32 mask = 1 << bit;
     if ((irqFlags & mask) == 0) {
@@ -206,7 +217,14 @@ u32 Bus::read32Slow(u32 addr) {
 
             return clkMode; // Turn on ready flag
         }
+        case IO::T0_RELOAD: return timers[0].reload;
+        case IO::T0_COUNT: return timers[0].counter;
+        case IO::T0_MODE: return timers[0].mode;
+        case IO::T1_RELOAD: return timers[1].reload;
+        case IO::T1_COUNT: return timers[1].counter;
         case IO::T1_MODE: return timers[1].mode;
+        case IO::T2_RELOAD: return timers[2].reload;
+        case IO::T2_COUNT: return timers[2].counter;
         case IO::T2_MODE: return timers[2].mode;
         case IO::BATT_CTRL: return 0; // Undocumented
         case IO::F_CAL: return 0;
@@ -293,32 +311,38 @@ void Bus::write32Slow(u32 addr, u32 val) {
 
             case IO::T0_RELOAD:
                 timers[0].reload = val & 0xFFFF;
-                printf("Wrote %08X to T0_RELOAD\n", val);
+                break;
+
+            case IO::T0_COUNT:
+                timers[0].counter = val & 0xFFFF;
                 break;
 
             case IO::T0_MODE:
-                timers[0].mode = val;
-                printf("Wrote %08X to T0_MODE\n", val);
+                timers[0].writeMode(val);
                 break;
 
             case IO::T1_RELOAD:
                 timers[1].reload = val & 0xFFFF;
-                printf("Wrote %08X to T1_RELOAD\n", val);
+                break;
+
+            case IO::T1_COUNT:
+                timers[1].counter = val & 0xFFFF;
                 break;
 
             case IO::T1_MODE:
-                timers[1].mode = val;
-                printf("Wrote %08X to T1_MODE\n", val);
+                timers[1].writeMode(val);
                 break;
 
             case IO::T2_RELOAD:
                 timers[2].reload = val & 0xFFFF;
-                printf("Wrote %08X to T2_RELOAD\n", val);
+                break;
+
+            case IO::T2_COUNT:
+                timers[2].counter = val & 0xFFFF;
                 break;
 
             case IO::T2_MODE:
-                timers[2].mode = val;
-                printf("Wrote %08X to T2_MODE\n", val);
+                timers[2].writeMode(val);
                 break;
 
             case IO::RTC_MODE:
@@ -378,7 +402,8 @@ void Bus::write32Slow(u32 addr, u32 val) {
                 break;
 
             case IO::DAC_DATA:
-                printf("Wrote %08X to DAC_DATA\n", val);
+                // No audio output yet. With Timer1 running, the kernel's sound loop writes this
+                // once per Timer1 expiry, so it is too hot to log.
                 break;
 
             case IO::BATT_CTRL:

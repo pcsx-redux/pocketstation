@@ -12,7 +12,7 @@ POKKET_CFLAGS := $(CFLAGS) -std=c11 -Ioverride -I. -DPSEMU_TESTDATA_DIR='"testda
 
 all: build/bu_test
 
-build/core_%.o: $(CORE)/%.cc $(wildcard $(CORE)/*.h)
+build/core_%.o: $(CORE)/%.cc $(wildcard $(CORE)/*.h $(CORE)/cpu/*.inl $(CORE)/cpu/*/*.inl)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
