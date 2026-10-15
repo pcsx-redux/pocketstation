@@ -320,8 +320,12 @@ void Bus::write32Slow(u32 addr, u32 val) {
                 timers[0].reload = val & 0xFFFF;
                 break;
 
+            // The count registers are read-only: a handler that writes COUNT to re-arm does not
+            // move the next expiry (pk_timing_bench screens 8/10/11 read 0 ticks late on a real
+            // unit). The counter is loaded from the period on the enable edge, in writeMode().
             case IO::T0_COUNT:
-                timers[0].counter = val & 0xFFFF;
+            case IO::T1_COUNT:
+            case IO::T2_COUNT:
                 break;
 
             case IO::T0_MODE:
@@ -332,20 +336,12 @@ void Bus::write32Slow(u32 addr, u32 val) {
                 timers[1].reload = val & 0xFFFF;
                 break;
 
-            case IO::T1_COUNT:
-                timers[1].counter = val & 0xFFFF;
-                break;
-
             case IO::T1_MODE:
                 timers[1].writeMode(val);
                 break;
 
             case IO::T2_RELOAD:
                 timers[2].reload = val & 0xFFFF;
-                break;
-
-            case IO::T2_COUNT:
-                timers[2].counter = val & 0xFFFF;
                 break;
 
             case IO::T2_MODE:
