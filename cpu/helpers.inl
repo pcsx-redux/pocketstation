@@ -173,3 +173,22 @@ u32 inline _BIC (u32 operand1, u32 operand2) {
 
     return res;
 }
+
+// Misaligned loads (ARM7TDMI, identical in ARM and Thumb state). The bus is never asked for a
+// misaligned access; the CPU reads the aligned unit and arranges the bytes itself:
+//   LDR   reads the aligned word and rotates it right by 8 bits per byte of misalignment.
+//   LDRH  at an odd address reads the aligned halfword and rotates it right by 8 in 32 bits,
+//         so the byte at the address lands in bits 0-7 and the byte below it in bits 24-31.
+//   LDRSH at an odd address is a sign-extended byte load (LDRSB) from that address.
+u32 inline loadWordRotated (u32 addr) {
+    return ROR <false> (read32 (addr & ~3), (addr & 3) * 8);
+}
+
+u32 inline loadHalfRotated (u32 addr) {
+    return ROR <false> ((u32) read16 (addr & ~1), (addr & 1) * 8);
+}
+
+u32 inline loadHalfSigned (u32 addr) {
+    if (addr & 1) return (u32)(s32)(s8) read8 (addr);
+    return (u32)(s32)(s16) read16 (addr);
+}

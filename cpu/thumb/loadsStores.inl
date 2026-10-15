@@ -16,12 +16,10 @@ void Thumb_HalfwordTransferImm (u32 instruction) {
     const auto rb = registers[(instruction >> 3) & 7];
     const auto offset = ((instruction >> 6) & 0x1F) << 1;
     const auto addr = rb + offset;
-    if (addr & 1) Helpers::panic ("Unaligned Thumb halfword transfer");
-
-    if constexpr (isLoad) 
-        registers[rdIndex] = read16 (addr);
+    if constexpr (isLoad)
+        registers[rdIndex] = loadHalfRotated (addr);
     else
-        write16 (addr, registers[rdIndex] & 0xFFFF);
+        write16 (addr & ~1, registers[rdIndex] & 0xFFFF); // STRH ignores address bit 0
 
     registers[15] += 2; // fake pipeline
 }
@@ -81,7 +79,7 @@ void Thumb_loadWithReg (u32 instruction) {
     const auto address = rb + ro;
 
     if constexpr (isHalfword) {
-        registers[rdIndex] = read16 (address); // TODO: Unaligned accesses
+        registers[rdIndex] = loadHalfRotated (address);
     }
 
     else {
@@ -97,7 +95,7 @@ void Thumb_SPRelativeLoad(u32 instruction) {
     const u32 imm = (instruction & 0xFF) << 2;
     const u32 sp = registers[13];
     const u32 rd = (instruction >> 8) & 0x7;
-    registers[rd] = read32(sp + imm);
+    registers[rd] = loadWordRotated(sp + imm);
 
     registers[15] += 2; // fake pipeline
 }
@@ -137,6 +135,6 @@ void Thumb_LDRSH(u32 instruction) {
     const auto ro = registers[(instruction >> 6) & 7];
     const auto addr = ro + rb;
 
-    registers[rdIndex] = (u32)(s16) read16(addr);
+    registers[rdIndex] = loadHalfSigned(addr);
     registers[15] += 2; // fake pipeline
 }
