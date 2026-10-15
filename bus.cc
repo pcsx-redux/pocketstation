@@ -249,7 +249,7 @@ u32 Bus::read32Slow(u32 addr) {
                 return rtcMode;
             } else if (addr >= 0x0D000100 && addr < 0x0D000180) {  // LCD_VRAM, one scanline per word
                 u32 word;
-                std::memcpy(&word, &lcd.vram[addr & 0x7f], sizeof(word));
+                std::memcpy(&word, &lcd.vram[addr & 0x7c], sizeof(word));
                 return word;
             } else {
                 Helpers::panic("32-bit read from unimplemented slow address: %08X\n", addr);
