@@ -158,11 +158,10 @@ void ARM_LDRB (int rdIndex, u32 address) {
 
 template <bool signExtend>
 void ARM_LDRH (int rdIndex, u32 address) {
-    auto src = read16 (address);
     if (rdIndex == 15) Helpers::panic ("LDRH with r15 == rd\n");
-    
-    if constexpr (!signExtend) registers [rdIndex] = src;
-    else registers [rdIndex] = Helpers::signExtend32 (src, 16);
+
+    if constexpr (!signExtend) registers [rdIndex] = loadHalfRotated (address);
+    else registers [rdIndex] = loadHalfSigned (address);
 
     registers[15] += 4; // fake pipeline
 }
