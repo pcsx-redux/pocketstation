@@ -1,6 +1,7 @@
 #include "bus.h"
 #include "io.h"
 
+#include <cstring>
 #include <ctime>
 
 // Focused COM/INT tracing for reversing the kernel's handshake. Gated by comTrace. COM register
@@ -244,6 +245,12 @@ u32 Bus::read32Slow(u32 addr) {
             } else if (addr >= 0x0C800000 && addr < 0x0C800010) {
                 printf("Read from %08X (stupid IR jazz)\n", addr);
                 return 0;
+            } else if (addr == IO::RTC_MODE) {
+                return rtcMode;
+            } else if (addr >= 0x0D000100 && addr < 0x0D000180) {  // LCD_VRAM, one scanline per word
+                u32 word;
+                std::memcpy(&word, &lcd.vram[addr & 0x7f], sizeof(word));
+                return word;
             } else {
                 Helpers::panic("32-bit read from unimplemented slow address: %08X\n", addr);
             }
