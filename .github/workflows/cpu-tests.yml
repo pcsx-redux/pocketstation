@@ -1,0 +1,14 @@
+name: cpu-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cpu:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run the CPU tests
+        run: make -C tests/cpu check -j"$(nproc)"
