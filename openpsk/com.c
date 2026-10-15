@@ -151,10 +151,10 @@ static void card_get_state(void) {
     b[0]  = 0x12;                               /* length of the 18 bytes that follow */
     b[1]  = (unsigned char)(dir >> 8);          /* dir_index.bit8-15 */
     b[2]  = (unsigned char)dir;                 /* dir_index.bit0-7  */
-    b[3]  = (unsigned char)((flags >> 0) & 1u); /* ComFlags.0 - flash write enabled */
-    b[4]  = (unsigned char)((flags >> 1) & 1u); /* ComFlags.1 - speaker */
-    b[5]  = (unsigned char)((flags >> 3) & 1u); /* ComFlags.3 - IR transmit */
-    b[6]  = (unsigned char)((flags >> 2) & 1u); /* ComFlags.2 - LED */
+    b[3]  = (unsigned char)((flags >> 0) & 1u); /* ComFlags.0 - flash write, 1=disabled */
+    b[4]  = (unsigned char)((flags >> 1) & 1u); /* ComFlags.1 - speaker, 1=disabled */
+    b[5]  = (unsigned char)((flags >> 3) & 1u); /* ComFlags.3 - IR transmit, 1=disabled */
+    b[6]  = (unsigned char)((flags >> 2) & 1u); /* ComFlags.2 - LED, 1=disabled */
     for (int i = 0; i < 4; i++) b[7  + i] = (unsigned char)(sn   >> (8 * i));
     for (int i = 0; i < 4; i++) b[11 + i] = (unsigned char)(date >> (8 * i));
     for (int i = 0; i < 4; i++) b[15 + i] = (unsigned char)(time >> (8 * i));
