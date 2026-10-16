@@ -134,11 +134,15 @@ int main(int argc, char** argv) {
     auto kernel = readFile(argv[1]);
     auto mcs = readFile(argv[2]);
     if (kernel.size() != 16384 || mcs.size() <= 0x80 || (mcs.size() - 0x80) % 0x2000 ||
-        std::memcmp(&mcs[0x80 + 0x52], "MCX", 3)) {
+        mcs.size() - 0x80 > 15 * 0x2000 || std::memcmp(&mcs[0x80 + 0x52], "MCX", 3)) {
         std::fprintf(stderr, "bad inputs (kernel %zu bytes, mcs %zu bytes)\n", kernel.size(), mcs.size());
         return 77;
     }
     const int stopSeconds = argc > 3 ? std::atoi(argv[3]) : 10;
+    if (stopSeconds < 1) {
+        std::fprintf(stderr, "stop_seconds must be a positive integer\n");
+        return 77;
+    }
     std::atexit(dumpWramAtExit);
     auto card = cardFromMcs(mcs);
     dev.setKernel(kernel.data(), kernel.size());
