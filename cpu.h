@@ -124,6 +124,83 @@ class CPU {
     void handleUndefined(u32 instruction);
     void pollInterrupts();
 
+    // ---- Per-instruction cycle cost ------------------------------------------------------------
+    // The ARM7TDMI S/N/I cycle model with the PocketStation's per-region wait states, as measured
+    // on a retail unit by mentalfoundry's pk_timing_bench (Pokket pk_timing_bench/VERIFICATION.md;
+    // the same table as Pokket core/src/memory.c). One instruction costs:
+    //   fetch(PC region, ARM/Thumb)                       every instruction, executed or not
+    // + data(addr region) per load/store access            each CPU::read*/write* call, any width
+    // + internal (I) cycles                                LDR/LDM/SWP +1, reg-specified shift +1, MUL m
+    // + 2 * fetch(new PC region, new state)                pipeline refill on any non-sequential PC
+    //                                                      (B/BL/BX, LDR/LDM/POP/ALU into PC, SWI)
+    // + 2 * fetch(vector, ARM)                             IRQ/FIQ entry
+    // CPU::step() then advances the timers and the RTC by that many system clock cycles.
+    struct RegionCost {
+        u8 data;        // cycles per data access (any width, sequential or not)
+        u8 fetchArm;    // cycles per 32-bit ARM opcode fetch
+        u8 fetchThumb;  // cycles per 16-bit Thumb opcode fetch
+    };
+    // Indexed by address bits 27-24. The pk_timing_bench screen that pins each value:
+    //  WRAM    data 1 / fetch 1: screen 9 control (WRAM STR loop, 11 cycles/iter = 0x2849), screen 3/4
+    //          controls (helper copies run from WRAM), screen 1 (WRAM LDR in both loops).
+    //  FLASH   data 2, fetch ARM 2 / Thumb 1: screen 1 (the same loop run from FLASH: ARM 12 cycles/iter
+    //          = 0x2BF2, Thumb 7 = 0x19A3), and the loop overhead of screens 2, 7, 9.
+    //  BIOS    fetch ARM 2 / Thumb 1, as FLASH: screens 3 (ARM helper 0x802D vs its WRAM copy 0x6A33)
+    //          and 4 (Thumb helper 0xB71B vs its WRAM copy 0xB371: Thumb fetches cost the same as
+    //          WRAM; the 1 cycle/iteration gap is the helper's PC-relative literal load, a BIOS
+    //          data access at 2 cycles).
+    //  F_CTRL  data 1 (the WRAM rate): screen 2 (FLASH_CTRL+0x100 LDR loop == the WRAM loop, 0x2BF2).
+    //  I/O     data 2: screen 9 test (IRDA_DATA STR loop 12 cycles/iter = 0x2BF2 vs WRAM 0x2849),
+    //          and the Timer0/INT register accesses of screen 7's interrupt path.
+    // WRAM is only the 2 KiB at 0x0..0x7FF; dataCycles/fetchCycles route the rest of region 0 to the
+    // slow default. Region 0x0 maps BIOS until F_CTRL=3, which is charged as WRAM (boot only).
+    static constexpr RegionCost kSlowRegion = {2, 2, 2};
+    static constexpr std::array<RegionCost, 16> kRegionCost = {{
+        {1, 1, 1},  // 0x0: WRAM
+        kSlowRegion,
+        {2, 2, 1},  // 0x2: FLASH1 (banked virtual window)
+        kSlowRegion,
+        {2, 2, 1},  // 0x4: BIOS ROM
+        kSlowRegion,
+        {1, 2, 2},  // 0x6: FLASH_CTRL registers (data at the WRAM rate; nothing executes here)
+        kSlowRegion,
+        {2, 2, 1},  // 0x8: FLASH2 (physical)
+        kSlowRegion,
+        kSlowRegion,  // 0xA: interrupt controller, timers
+        kSlowRegion,  // 0xB: CLK, RTC
+        kSlowRegion,  // 0xC: COM, IrDA
+        kSlowRegion,  // 0xD: LCD, IOP, DAC
+        kSlowRegion,
+        kSlowRegion,
+    }};
+    static const RegionCost& regionCost(u32 addr) {
+        if (addr < 0x800) return kRegionCost[0];
+        if (addr < 0x01000000 || addr >= 0x10000000) return kSlowRegion;
+        return kRegionCost[addr >> 24];
+    }
+    static u32 dataCycles(u32 addr) { return regionCost(addr).data; }
+    static u32 fetchCycles(u32 addr, bool thumb) {
+        return thumb ? regionCost(addr).fetchThumb : regionCost(addr).fetchArm;
+    }
+    // Multiply early termination (ARM7TDMI TRM): m = 1..4 by how many top bytes of the multiplier
+    // are all zeros or all ones. No bench screen constrains it; it is the documented core behaviour.
+    static u32 mulM(u32 rs) {
+        if ((rs >> 8) == 0 || (rs >> 8) == 0x00FFFFFF) return 1;
+        if ((rs >> 16) == 0 || (rs >> 16) == 0xFFFF) return 2;
+        if ((rs >> 24) == 0 || (rs >> 24) == 0xFF) return 3;
+        return 4;
+    }
+    u32 armInternalCycles(u32 instruction) const;
+    u32 thumbInternalCycles(u32 instruction) const;
+    u32 read16Raw(u32 addr);
+    u32 read32Raw(u32 addr);
+
+    u32 cycles = 0;  // cycles charged so far to the instruction CPU::step() is executing
+    // Set by the branch handlers (B, BL, BX, Thumb B/Bcond/BL): a taken branch always refills the
+    // pipeline, even when its target is the next instruction and the PC looks sequential.
+    // pk_timing_bench screen 4's helper ends in such a BNE (0xD1FF): 2 cycles/iteration.
+    bool branchTaken = false;
+
     u64 instructions = 0;  // count of instructions actually executed (not advanced while halted)
 
 public:
@@ -181,5 +258,7 @@ public:
     u16 read16(u32 addr);
     u32 read32(u32 addr);
 
-    void step();
+    // Execute one instruction (or one cycle of CLK_STOP sleep) and advance the timers and RTC by
+    // its cost. Returns the number of system clock cycles consumed (>= 1).
+    u32 step();
 };

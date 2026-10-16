@@ -114,6 +114,7 @@ class PocketStation {
     ::CPU m_cpu;
 
     uint32_t m_buttons = 0;  // latched button mask, reflected into INT bits 0..4 per frame.
+    uint64_t m_cycleCarry = 0;  // cycles the last runCycles() step overran its budget by.
 };
 
 }  // namespace PocketStation
