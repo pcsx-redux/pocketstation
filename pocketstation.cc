@@ -37,11 +37,16 @@ void PocketStation::reset() {
     m_cpu.reset();
     m_bus.reset();
     m_lcd.reset();
+    m_cycleCarry = 0;
     m_buttons = 0;  // bus.reset() clears irqFlags, so the reflected button levels start clear too.
 }
 
 void PocketStation::runCycles(uint64_t armCycles) {
-    for (uint64_t i = 0; i < armCycles; i++) m_cpu.step();
+    // Each step costs one or more system clock cycles; the overshoot of the last instruction
+    // past the budget is carried into the next call so the long-run rate stays exact.
+    uint64_t done = m_cycleCarry;
+    while (done < armCycles) done += m_cpu.step();
+    m_cycleCarry = done - armCycles;
 }
 
 void PocketStation::setButtons(uint32_t mask) {

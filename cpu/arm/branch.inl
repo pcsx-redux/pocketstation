@@ -7,6 +7,7 @@ void ARM_Branch (u32 instruction) {
 
     registers[15] += Helpers::signExtend32 (instruction & 0xFFFFFF, 24) << 2; // add sign extended offset to PC
     registers[15] += 8; // fake pipeline
+    branchTaken = true;
 }
 
 template <bool link>
@@ -15,6 +16,7 @@ void ARM_BX (u32 instruction) {
         registers[14] = registers[15] - 4;
     
     const auto rm = registers[instruction & 0xF];
+    branchTaken = true;
     if (rm & 1) { // this is ugly but gotta get that speed
         cpsr.thumb = true;
         registers[15] = (rm & ~1) + 4; // fake pipeline

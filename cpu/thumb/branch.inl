@@ -5,6 +5,7 @@ void Thumb_B (u32 instruction) {
     offset = Helpers::signExtend32 (offset, 12); // Sign extend the offset to 32 bits from 12
 
     registers[15] += offset + 4; // branch and fake pipeline
+    branchTaken = true;
 }
 
 template <bool isSecondPart> // Thumb BL instructions are split into 2 parts
@@ -21,6 +22,7 @@ void Thumb_BL (u32 instruction) {
         const auto pc = registers[15];
         registers[15] = registers[14] + offset; 
         registers[15] += 4; // fake pipeline
+        branchTaken = true;
 
         registers[14] = (pc-2) | 1; // Set LR, toggle bit 0 on to indicate this is function call from thumb code 
     }
@@ -34,6 +36,7 @@ void Thumb_conditionalBranch (u32 instruction) {
 
         registers[15] += offset;
         registers[15] += 4; // fake pipeline
+        branchTaken = true;
     }
 
     else {

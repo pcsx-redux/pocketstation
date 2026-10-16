@@ -2,6 +2,7 @@
 #include "io.h"
 
 void CPU::write8 (u32 addr, u8 val) {
+    cycles += dataCycles(addr);
     const auto page = addr >> 11;
     const auto pointer = writeTable[page];
 
@@ -20,6 +21,7 @@ void CPU::write8 (u32 addr, u8 val) {
 }
 
 void CPU::write16 (u32 addr, u16 val) {
+    cycles += dataCycles(addr);
     const auto page = addr >> 11;
     const auto pointer = writeTable[page];
 
@@ -32,6 +34,7 @@ void CPU::write16 (u32 addr, u16 val) {
 }
 
 void CPU::write32 (u32 addr, u32 val) {
+    cycles += dataCycles(addr);
     const auto page = addr >> 11;
     const auto pointer = writeTable[page];
 
@@ -44,6 +47,7 @@ void CPU::write32 (u32 addr, u32 val) {
 }
 
 u8 CPU::read8 (u32 addr) {
+    cycles += dataCycles(addr);
     const auto page = addr >> 11;
     const auto pointer = readTable[page];
 
@@ -54,6 +58,12 @@ u8 CPU::read8 (u32 addr) {
 }
 
 u16 CPU::read16 (u32 addr) {
+    cycles += dataCycles(addr);
+    return (u16)read16Raw(addr);
+}
+
+// Uncosted 16-bit read: the opcode fetch path (executeThumb charges fetchCycles instead).
+u32 CPU::read16Raw (u32 addr) {
     const auto page = addr >> 11;
     const auto pointer = readTable[page];
 
@@ -66,6 +76,12 @@ u16 CPU::read16 (u32 addr) {
 }
 
 u32 CPU::read32 (u32 addr) {
+    cycles += dataCycles(addr);
+    return read32Raw(addr);
+}
+
+// Uncosted 32-bit read: the opcode fetch path (executeARM charges fetchCycles instead).
+u32 CPU::read32Raw (u32 addr) {
     const auto page = addr >> 11;
     const auto pointer = readTable[page];
 
@@ -110,6 +126,7 @@ void CPU::pollInterrupts() {
         registers[15] = 0x1C; // Jump to FIQ vector
 
         registers[15] += 8; // Fake pipeline
+        cycles += 2 * fetchCycles(0x1C, false);  // exception entry = pipeline refill at the vector
     } else if (!cpsr.irqDisable && (interrupts & 0x1F9F)) {
         const auto lr = cpsr.thumb ? registers[15] : registers[15] - 4;
 
@@ -123,45 +140,67 @@ void CPU::pollInterrupts() {
         registers[15] = 0x18; // Jump to IRQ vector
 
         registers[15] += 8; // Fake pipeline
+        cycles += 2 * fetchCycles(0x18, false);  // exception entry = pipeline refill at the vector
     }
 }
 
-void CPU::step() {
-    bus.tickRtc();  // advance the RTC square wave (INT_INPUT.9) one cycle; may latch the RTC IRQ.
-                    // Done FIRST and UNCONDITIONALLY: the RTC oscillator keeps running while the
-                    // CPU clock is stopped (CLK_STOP sleep), so its square wave can wake the core.
-
+u32 CPU::step() {
+    bool woke = false;  // the wake cycle ticked the RTC above, so it counts toward this step
     if (bus.halted) {
-        // CLK_STOP sleep: the CPU core clock is stopped. We advanced the wake sources (tickRtc
-        // above) but execute NO instruction this cycle. Wake when an unmasked interrupt has
-        // latched (irqLatch & irqMask) -- the same condition pollInterrupts dispatches on. On
-        // wake, fall through so pollInterrupts services it and execution resumes at the
-        // instruction after the CLK_STOP store. (psx-spx: "Stops the CPU until an interrupt
-        // occurs"; wakeup via IRQ-0 Fire / IRQ-9 RTC / IRQ-11 Docking.)
+        // CLK_STOP sleep: the CPU core clock is stopped. Advance the RTC oscillator (it keeps
+        // running and its square wave can wake the core) but execute NO instruction this cycle.
+        // Wake when an unmasked interrupt has latched (irqLatch & irqMask) -- the same condition
+        // pollInterrupts dispatches on. On wake, fall through so pollInterrupts services it and
+        // execution resumes at the instruction after the CLK_STOP store. (psx-spx: "Stops the CPU
+        // until an interrupt occurs"; wakeup via IRQ-0 Fire / IRQ-9 RTC / IRQ-11 Docking.)
+        bus.tickRtc();
         if (bus.irqLatch & bus.irqMask) {
             bus.halted = false;
+            woke = true;
         } else {
-            return;  // still asleep: no instruction executed (cheap idle, ~no host CPU burned).
+            return 1;  // still asleep: no instruction executed (cheap idle, ~no host CPU burned).
         }
     }
 
-    bus.tickTimers();  // the timers run off the system clock, so they stop with it while halted.
-    pollInterrupts();
+    cycles = 0;
+    branchTaken = false;
+    pollInterrupts();  // charges the exception-entry refill if it dispatches
 
-    if (!cpsr.thumb)
+    const u32 pcBefore = registers[15];
+    const bool thumbBefore = cpsr.thumb;
+    if (!thumbBefore)
         executeARM();
     else
         executeThumb();
 
+    // Any non-sequential PC (taken branch, BX, load/ALU into PC, SWI, a state switch) refills the
+    // pipeline: two more fetches at the new PC, in the new state. The branch handlers flag a taken
+    // branch explicitly, since one whose target is the next instruction leaves the PC sequential.
+    const u32 seqPC = pcBefore + (thumbBefore ? 2 : 4);
+    if (branchTaken || registers[15] != seqPC || cpsr.thumb != thumbBefore) {
+        const u32 target = registers[15] - (cpsr.thumb ? 4 : 8);
+        cycles += 2 * fetchCycles(target, cpsr.thumb);
+    }
+
+    // The timers and the RTC run off the same system clock: advance them by this instruction's
+    // cost. (A CLK_STOP store sets bus.halted mid-instruction; its own cycles still elapse.)
+    for (u32 i = 0; i < cycles; i++) {
+        bus.tickRtc();
+        bus.tickTimers();
+    }
+
     instructions++;
+    return cycles + (woke ? 1 : 0);
 }
 
 void CPU::executeARM() {
     if (bus.comTrace) bus.curPC = registers[15] - 8;  // stash fetch PC for COM/INT access tracing.
-    const auto instruction = read32 (registers[15] - 8);
+    const auto instruction = read32Raw (registers[15] - 8);
+    cycles += fetchCycles(registers[15] - 8, false);
     //printf("Hello. PC: %08X. Instruction %08X\n", registers[15] - 8, instruction);
 
     if (isConditionTrue(instruction >> 28)) {
+        cycles += armInternalCycles(instruction);  // before execution: MUL reads Rs before writeback
         const auto lutIndex = ((instruction >> 4) & 0xF) | ((instruction >> 16) & 0xFF0); // compute a hash to index into the function pointer table
         (*this.*ARM_LUT[lutIndex]) (instruction); // call function
     }
@@ -175,10 +214,67 @@ void CPU::executeARM() {
 
 void CPU::executeThumb() {
     if (bus.comTrace) bus.curPC = registers[15] - 4;  // stash fetch PC for COM/INT access tracing.
-    const auto instruction = read16 (registers[15] - 4);
+    const auto instruction = (u16)read16Raw (registers[15] - 4);
+    cycles += fetchCycles(registers[15] - 4, true);
+    cycles += thumbInternalCycles(instruction);  // before execution: MUL reads Rs before writeback
     //printf("Hello. PC: %08X. Instruction: %04X\n", registers[15] - 4, instruction);
     const auto index = instruction >> 8;
     (*this.*Thumb_LUT[index]) (instruction);
+}
+
+// Internal (I) cycles of a condition-passed ARM instruction (ARM7TDMI TRM ch. 7). The fetch, data
+// accesses and any refill are charged elsewhere. Screen 1 (LDR loop) and screen 3 (BIOS ARM helper:
+// LDRB) pin the load +1I; the rest is the documented core timing.
+u32 CPU::armInternalCycles(u32 i) const {
+    switch ((i >> 25) & 7) {
+        case 0:
+            if ((i & 0x90) == 0x90) {
+                if ((i & 0x60) == 0) {
+                    const u32 m = mulM(registers[(i >> 8) & 0xF]);
+                    const u32 acc = (i >> 21) & 1;
+                    if ((i & 0x0FC000F0) == 0x00000090) return m + acc;      // MUL/MLA: m (+1)
+                    if ((i & 0x0F8000F0) == 0x00800090) return m + 1 + acc;  // [US]MULL/MLAL
+                    if ((i & 0x0FB00FF0) == 0x01000090) return 1;            // SWP/SWPB: +1I
+                    return 0;
+                }
+                return (i >> 20) & 1;  // LDRH/LDRSB/LDRSH: +1I, STRH: none
+            }
+            if ((i & 0x0FFFFFF0) == 0x012FFF10) return 0;  // BX
+            return (i >> 4) & 1;  // data processing with a register-specified shift: +1I
+        case 2:
+        case 3:  // LDR/LDRB: +1I
+        case 4:  // LDM: +1I
+            return (i >> 20) & 1;
+        default:
+            return 0;
+    }
+}
+
+// Internal (I) cycles of a Thumb instruction. Screen 1 (Thumb LDR loop) and screen 4 (BIOS Thumb
+// helper) pin the load +1I.
+u32 CPU::thumbInternalCycles(u32 i) const {
+    switch (i >> 12) {
+        case 0x4:
+            if ((i & 0xFC00) == 0x4000) {  // ALU ops
+                const u32 op = (i >> 6) & 0xF;
+                if (op == 2 || op == 3 || op == 4 || op == 7) return 1;  // LSL/LSR/ASR/ROR by reg
+                if (op == 13) return mulM(registers[(i >> 3) & 7]);     // MUL: m
+                return 0;
+            }
+            return (i & 0xF800) == 0x4800 ? 1 : 0;  // LDR PC-relative
+        case 0x5:
+            return ((i >> 9) & 7) >= 3 ? 1 : 0;  // register offset: LDSB/LDR/LDRH/LDRB/LDSH
+        case 0x6:
+        case 0x7:
+        case 0x8:
+        case 0x9:  // immediate / SP-relative loads
+        case 0xC:  // LDMIA
+            return (i >> 11) & 1;
+        case 0xB:
+            return (i & 0x0600) == 0x0400 ? (i >> 11) & 1 : 0;  // POP: +1I
+        default:
+            return 0;
+    }
 }
 
 // fake pipeline for speed
