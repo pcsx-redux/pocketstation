@@ -145,6 +145,7 @@ void CPU::pollInterrupts() {
 }
 
 u32 CPU::step() {
+    bool woke = false;  // the wake cycle ticked the RTC above, so it counts toward this step
     if (bus.halted) {
         // CLK_STOP sleep: the CPU core clock is stopped. Advance the RTC oscillator (it keeps
         // running and its square wave can wake the core) but execute NO instruction this cycle.
@@ -155,6 +156,7 @@ u32 CPU::step() {
         bus.tickRtc();
         if (bus.irqLatch & bus.irqMask) {
             bus.halted = false;
+            woke = true;
         } else {
             return 1;  // still asleep: no instruction executed (cheap idle, ~no host CPU burned).
         }
@@ -188,7 +190,7 @@ u32 CPU::step() {
     }
 
     instructions++;
-    return cycles;
+    return cycles + (woke ? 1 : 0);
 }
 
 void CPU::executeARM() {
