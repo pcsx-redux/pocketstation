@@ -76,6 +76,11 @@ static void card_read(void) {
 /* Memory Card write (command 0x57). Symmetric to the read: receive the sector address, ack, then
  * receive 128 data bytes into the sector buffer (verifying the running checksum the host sends), and
  * if it matches program the flash sector. Reports the standard end byte: 'G' ok / 'N' bad checksum. */
+/* Memory card FLAG (the status byte after the 0x81 select). 0x08 marks a new card: it is set after
+ * an insertion and cleared by the first successful Write Sector, and only a removal and re-insertion
+ * set it again (Pokket bu_test "FLAG MARKS A NEW CARD"). Zero-initialised .bss, so 0 = new card. */
+static unsigned char card_written;
+
 static void card_write(void) {
     if (com_exchange(0)) return;
     unsigned msb = com_rx();
@@ -99,6 +104,7 @@ static void card_write(void) {
     unsigned sector = (msb << 8) | lsb;
     unsigned ok = swi_handler_write_flash_absolute(FLASH_BASE_ABS + sector * 128u,
                                                    (unsigned)PSK_SECTOR_BUF);
+    if (ok == 0) card_written = 1;                  /* FLAG reads 0x00 from now on */
     com_exchange(ok == 0 ? 0x47 : 'N');             /* 'G' ok / 'N' fail */
 }
 
@@ -291,7 +297,7 @@ static void com_command(void) {
     PSK_MMIO(COM_CTRL2) = 1;
 
     if (com_rx() != 0x81) return;                   /* device-select: must address the card */
-    if (com_exchange(0x08)) return;                 /* FLAG status byte (card-status); RX = the command byte */
+    if (com_exchange(card_written ? 0x00 : 0x08)) return; /* FLAG status byte; RX = the command byte */
     unsigned cmd = com_rx();
 
     if (cmd == 0x52 || cmd == 0x57 || cmd == 0x53) {
@@ -358,6 +364,7 @@ void openpsk_comm_disable(void) {
  * the link is brought up and down here directly - the flag is still raised for whoever reads it. */
 void openpsk_dock_service(void) {
     psk_comflags_or(PSK_CF_INSERTED);               /* an insertion/removal edge happened */
+    card_written = 0;                               /* FLAG reads 0x08 again: a new card */
     if (PSK_MMIO(INT_INPUT) & INT_DOCKED) {
         psk_comflags_or(PSK_CF_DEVICES_DIS);        /* docked: the PS owns the power budget */
         openpsk_comm_enable();
