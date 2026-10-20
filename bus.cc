@@ -247,6 +247,12 @@ u32 Bus::read32Slow(u32 addr) {
                 return 0;
             } else if (addr == IO::RTC_MODE) {
                 return rtcMode;
+            } else if (addr == IO::CLK_STOP) {
+                // PMStandby is write-only in the PDA hardware spec. pk_timing_bench screen 13 reads
+                // it after a wake, and two real units return 0x17: PMFrequency's value at FREQ 7 with
+                // the ready bit set. Modelled as a read mirror of CLK_MODE without the ready-bit
+                // counter's side effect; other frequencies are unmeasured.
+                return (clkMode & 0xf) | 0x10;
             } else if (addr >= 0x0D000100 && addr < 0x0D000180) {  // LCD_VRAM, one scanline per word
                 u32 word;
                 std::memcpy(&word, &lcd.vram[addr & 0x7c], sizeof(word));
