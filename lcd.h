@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include "state.h"
 #include "types.h"
 
 union LCDMode {
@@ -22,4 +23,14 @@ struct LCD {
     std::array<u8, 128> vram;
 
     void reset();
+    void saveState(PSKState::Writer& w) const {
+        w.u32v(mode.raw);
+        w.u32v(calibrationValue);
+        w.bytes(vram.data(), vram.size());
+    }
+    void loadState(PSKState::Reader& r) {
+        mode.raw = r.u32v();
+        calibrationValue = r.u32v();
+        r.bytes(vram.data(), vram.size());
+    }
 };

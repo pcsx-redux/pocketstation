@@ -396,3 +396,37 @@ void CPU::setMode (CPUModes mode) {
 
     cpsr.mode = mode;
 }
+void CPU::saveState(PSKState::Writer& w) const {
+    for (u32 v : registers) w.u32v(v);
+    w.u32v(cpsr.raw);
+    w.u32v(spsr.raw);
+    for (const auto* bank : {&r8_banks, &r9_banks, &r10_banks, &r11_banks, &r12_banks}) {
+        for (u32 v : *bank) w.u32v(v);
+    }
+    for (u32 v : r13_banks) w.u32v(v);
+    for (u32 v : r14_banks) w.u32v(v);
+    for (const PSR& p : spsr_banks) w.u32v(p.raw);
+    w.u64v(instructions);
+    w.flag(readTable[0] == (uintptr_t)&bus.wram[0]);
+}
+
+void CPU::loadState(PSKState::Reader& r) {
+    // Raw assignment, not setCPSR(): the banks are restored as saved, and a mode switch here
+    // would swap the live registers into them.
+    for (u32& v : registers) v = r.u32v();
+    cpsr.raw = r.u32v();
+    spsr.raw = r.u32v();
+    for (auto* bank : {&r8_banks, &r9_banks, &r10_banks, &r11_banks, &r12_banks}) {
+        for (u32& v : *bank) v = r.u32v();
+    }
+    for (u32& v : r13_banks) v = r.u32v();
+    for (u32& v : r14_banks) v = r.u32v();
+    for (PSR& p : spsr_banks) p.raw = r.u32v();
+    instructions = r.u64v();
+    if (r.flag()) {
+        readTable[0] = writeTable[0] = (uintptr_t)&bus.wram[0];
+    } else {
+        readTable[0] = (uintptr_t)&bus.bios[0];
+        writeTable[0] = 0;
+    }
+}

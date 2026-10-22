@@ -27,7 +27,8 @@ What changed since the donation:
 ## Layout
 
 - `pocketstation.{h,cc}` - the device: kernel/flash injection, cycle catch-up,
-  card link.
+  card link, savestates (`saveState()`/`loadState()`, format in `state.h`).
+  `tests/savestate/` checks the round trip on OpenPSK.
 - `cpu.{h,cc}` + `cpu/` - ARM7TDMI core and the ARM/Thumb instruction tables.
 - `bus.{h,cc}` - memory map, FLASH banking, I/O registers, interrupts.
 - `lcd.{h,cc}` - 32x32 1bpp framebuffer.

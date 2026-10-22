@@ -5,6 +5,7 @@
 #include <vector>
 #include "types.h"
 #include "lcd.h"
+#include "state.h"
 #include "timer.h"
 
 class Bus {
@@ -18,6 +19,8 @@ class Bus {
     u32 iopCtrl;
     u32 dacCtrl;
     u32 clkMode;
+    int clkReadTries = 0;  // CLK_MODE reads since the ready bit last dropped (see read32Slow)
+    bool rtcAdjustSkip = false;  // RTC_ADJUST takes every other write (see write32Slow)
 
     u32 rtcMode;
     struct RTC {
@@ -372,6 +375,10 @@ public:
     }
 
     void reset();
+    // Device state for savestates: everything above except the kernel image, the page tables
+    // (rebuilt from the flash mappings) and the trace/diagnostic fields.
+    void saveState(PSKState::Writer& w) const;
+    void loadState(PSKState::Reader& r);
     void requestInterrupt(int bit);
     // Advance Timer0-2 by one system clock cycle, latching their interrupts on expiry.
     void tickTimers();

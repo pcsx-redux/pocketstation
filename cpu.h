@@ -251,6 +251,12 @@ public:
         bus.writeTable.resize(0x200000, 0);
     }
 
+    // Register file for savestates: the live registers, CPSR/SPSR, every banked copy, the
+    // instruction count, and whether F_CTRL=3 has mapped WRAM over the BIOS at address 0. Load
+    // after Bus::loadState(), on a core that has been reset() once (the BIOS/flash page tables).
+    void saveState(PSKState::Writer& w) const;
+    void loadState(PSKState::Reader& r);
+
     void write8(u32 addr, u8 val);
     void write16(u32 addr, u16 val);
     void write32(u32 addr, u32 val);

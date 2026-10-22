@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "bus.h"
 #include "cpu.h"
@@ -48,6 +49,15 @@ class PocketStation {
     void reset();  // power-on; donor reset order (cpu, bus, lcd).
 
     void runCycles(uint64_t armCycles);  // step the ARM core forward N cycles.
+
+    // ---- savestates ---------------------------------------------------------------------------
+    // The whole device as a versioned blob: the ARM7 registers with every banked copy, WRAM, flash
+    // contents and controller, interrupts, timers, RTC, clock and sleep, the COM link (an exchange
+    // in progress included), the LCD and the button latch. The kernel image is not in it: set the
+    // same kernel before loadState(). loadState() returns false and leaves the device untouched
+    // when the blob is not one this build wrote.
+    std::vector<uint8_t> saveState() const;
+    bool loadState(const uint8_t* data, size_t len);
 
     const uint8_t* vram() const;  // 128 bytes, 32x32 @ 1bpp.
     uint32_t lcdMode() const;
