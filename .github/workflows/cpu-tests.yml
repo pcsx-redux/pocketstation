@@ -17,3 +17,13 @@ jobs:
           persist-credentials: false
       - name: Build and run the CPU tests
         run: make -C tests/cpu check -j"$(nproc)"
+  savestate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install the ARM toolchain for OpenPSK
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+      - name: Savestate round trip on OpenPSK
+        run: make -C tests/savestate check -j"$(nproc)"

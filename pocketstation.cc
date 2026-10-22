@@ -19,6 +19,8 @@
 
 #include "pocketstation.h"
 
+#include <cstring>
+
 namespace PCSX {
 namespace PocketStation {
 
@@ -72,6 +74,38 @@ void PocketStation::setButtons(uint32_t mask) {
         }
     }
     m_buttons = mask;
+}
+
+// Blob layout: "PSKS", a format version, then the bus, CPU, LCD and device fields in that order.
+static constexpr uint8_t kStateMagic[4] = {'P', 'S', 'K', 'S'};
+static constexpr uint32_t kStateVersion = 1;
+
+std::vector<uint8_t> PocketStation::saveState() const {
+    PSKState::Writer w;
+    w.bytes(kStateMagic, sizeof(kStateMagic));
+    w.u32v(kStateVersion);
+    m_bus.saveState(w);
+    m_cpu.saveState(w);
+    m_lcd.saveState(w);
+    w.u32v(m_buttons);
+    w.u64v(m_cycleCarry);
+    return std::move(w.buf);
+}
+
+bool PocketStation::loadState(const uint8_t* data, size_t len) {
+    // Every field is fixed-width, so a blob of this version is exactly as long as one written now.
+    if (len != saveState().size() || std::memcmp(data, kStateMagic, sizeof(kStateMagic)) != 0) return false;
+    PSKState::Reader r{data + sizeof(kStateMagic), len - sizeof(kStateMagic)};
+    if (r.u32v() != kStateVersion) return false;
+    // Lay down the fixed page tables (BIOS, physical flash) before the state goes over them.
+    m_cpu.reset();
+    m_bus.reset();
+    m_bus.loadState(r);
+    m_cpu.loadState(r);  // after the bus: its WRAM-over-BIOS flag edits page 0 last
+    m_lcd.loadState(r);
+    m_buttons = r.u32v();
+    m_cycleCarry = r.u64v();
+    return r.ok && r.left == 0;
 }
 
 const uint8_t* PocketStation::vram() const { return m_lcd.vram.data(); }

@@ -1,4 +1,5 @@
 #pragma once
+#include "state.h"
 #include "types.h"
 
 // One of the three timer channels at 0x0A800000 + n*0x10: period (+0x0), count (+0x4) and control
@@ -33,6 +34,19 @@ struct Timer {
         mode = val;
         prescale = 0;  // a control write restarts the prescaler
         if (!wasEnabled && (mode & 4)) counter = reload;
+    }
+
+    void saveState(PSKState::Writer& w) const {
+        w.u32v(mode);
+        w.u16v(counter);
+        w.u16v(reload);
+        w.u32v(prescale);
+    }
+    void loadState(PSKState::Reader& r) {
+        mode = r.u32v();
+        counter = r.u16v();
+        reload = r.u16v();
+        prescale = r.u32v();
     }
 
     // Advance by one system clock cycle. Returns true when the channel expires (and reloads).

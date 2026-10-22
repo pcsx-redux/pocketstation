@@ -33,6 +33,8 @@ void Bus::reset() {
     iopCtrl = 0;
     dacCtrl = 0; // Mute audio
     clkMode = 7; // Set CPU to 3.997696 MHz
+    clkReadTries = 0;
+    rtcAdjustSkip = false;
 
     rtc.reset();              // deterministic fallback values...
     seedRtcFromHostClock();   // ...then overwrite with the real host wall-clock time.
@@ -208,11 +210,10 @@ u32 Bus::read32Slow(u32 addr) {
         case IO::CLK_MODE: {
             // Only turn on the "ready" bit after 4 reads.
             // Some games rely on reading 0 from the "ready" bit
-            static int tries = 0;
-            if (tries++ == 4) {
+            if (clkReadTries++ == 4) {
                 clkMode |= 0x10;
-            } else if (tries == 10) {
-                tries = 0;
+            } else if (clkReadTries == 10) {
+                clkReadTries = 0;
                 clkMode &= ~0x10;
             }
 
@@ -461,9 +462,8 @@ void Bus::write32Slow(u32 addr, u32 val) {
 
             case IO::RTC_ADJUST: {
                 printf("Wrote to stubbed RTC_ADJUST\n");
-                static bool skip = false;
-                if (skip) {
-                    skip = false;
+                if (rtcAdjustSkip) {
+                    rtcAdjustSkip = false;
                     return;
                 }
 
@@ -508,7 +508,7 @@ void Bus::write32Slow(u32 addr, u32 val) {
                         Helpers::panic("Editing field %d via RTC_ADJUST\n", field);
                 }
 
-                skip = true;
+                rtcAdjustSkip = true;
                 break;
             }
 
@@ -545,4 +545,89 @@ void Bus::remapFLASH() {
             readTable[page] = 0;
         }
     }
+}
+void Bus::saveState(PSKState::Writer& w) const {
+    for (const auto& t : timers) t.saveState(w);
+    w.u32v(iopData);
+    w.u32v(iopCtrl);
+    w.u32v(dacCtrl);
+    w.u32v(clkMode);
+    w.u32v(u32(clkReadTries));
+    w.flag(rtcAdjustSkip);
+    w.u32v(rtcMode);
+    for (u32 v : {rtc.seconds, rtc.minutes, rtc.hours, rtc.dayOfWeek, rtc.days, rtc.months, rtc.years}) w.u32v(v);
+    w.u32v(rtcCountdown);
+    w.u64v(rtcEdgeCount);
+    w.u32v(irqMask);
+    w.u32v(irqFlags);
+    w.u32v(irqLatch);
+    w.flag(halted);
+
+    w.u32v(flash.enabledBanks);
+    for (u32 v : flash.bankMappings) w.u8v(u8(v));  // 4-bit virtual bank numbers
+    w.u32v(flash.f_wait1);
+    w.u32v(flash.dataCtrl);
+    w.u32v(u32(flash.progState));
+    w.bytes(flash.data.data(), flash.data.size());
+    w.bytes(wram.data(), wram.size());
+
+    w.u32v(com.mode);
+    w.u32v(com.ctrl1);
+    w.u32v(com.ctrl2);
+    w.u8v(com.rx);
+    w.u8v(com.tx);
+    w.u8v(com.txShifted);
+    w.flag(com.rxReady);
+    w.flag(com.acked);
+    w.u32v(com.stat2Events);
+    w.flag(com.irqLevel);
+    w.flag(com.selected);
+    w.flag(com.selReleased);
+    w.flag(com.txFresh);
+    w.u32v(com.hostUnderruns);
+}
+
+void Bus::loadState(PSKState::Reader& r) {
+    for (auto& t : timers) t.loadState(r);
+    iopData = r.u32v();
+    iopCtrl = r.u32v();
+    dacCtrl = r.u32v();
+    clkMode = r.u32v();
+    clkReadTries = int(r.u32v());
+    rtcAdjustSkip = r.flag();
+    rtcMode = r.u32v();
+    for (u32* v : {&rtc.seconds, &rtc.minutes, &rtc.hours, &rtc.dayOfWeek, &rtc.days, &rtc.months, &rtc.years}) {
+        *v = r.u32v();
+    }
+    rtcCountdown = r.u32v();
+    rtcEdgeCount = r.u64v();
+    irqMask = r.u32v();
+    irqFlags = r.u32v();
+    irqLatch = r.u32v();
+    halted = r.flag();
+
+    flash.enabledBanks = r.u32v();
+    for (u32& v : flash.bankMappings) v = r.u8v() & 0xF;
+    flash.f_wait1 = r.u32v();
+    flash.dataCtrl = r.u32v();
+    flash.progState = int(r.u32v());
+    r.bytes(flash.data.data(), flash.data.size());
+    r.bytes(wram.data(), wram.size());
+
+    com.mode = r.u32v();
+    com.ctrl1 = r.u32v();
+    com.ctrl2 = r.u32v();
+    com.rx = r.u8v();
+    com.tx = r.u8v();
+    com.txShifted = r.u8v();
+    com.rxReady = r.flag();
+    com.acked = r.flag();
+    com.stat2Events = r.u32v();
+    com.irqLevel = r.flag();
+    com.selected = r.flag();
+    com.selReleased = r.flag();
+    com.txFresh = r.flag();
+    com.hostUnderruns = r.u32v();
+
+    remapFLASH();  // the virtual flash window follows enabledBanks/bankMappings
 }
