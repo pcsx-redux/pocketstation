@@ -116,7 +116,7 @@ void ARM_DataProcessing (u32 instruction) {
         // Don't do anything special if the instruction doesn't actually write to r15
         if constexpr (opcode == TEQ || opcode == CMP || opcode == TST || opcode == CMN) return;
         registers[15] += 4; // fake pipeline
-        registers[15] &= ~3; // force align address
+        registers[15] &= ~1; // hardware keeps bit 1 of a misaligned target
         if constexpr (affectFlags) Helpers::panic ("DP instruction with rd==r15 and S bit set");
     }
 }

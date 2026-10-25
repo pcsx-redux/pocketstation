@@ -66,6 +66,11 @@ public:
     // lives here in the Bus because CPU::step() (the halt/wake gate) and the bus devices both
     // need to see it.
     bool halted = false;
+    // The store that stops the clock does not stop the core at once: the next instruction still
+    // starts while fewer than 3 cycles have elapsed since the store. stopPending/stopElapsed track
+    // that window; CPU::step() sets halted when it closes.
+    bool stopPending = false;
+    u32 stopElapsed = 0;
     std::atomic<u32> pressedButtons = 0; // The GUI thread writes here
 
     // The CPU core uses software fastmem
@@ -380,6 +385,7 @@ public:
     void saveState(PSKState::Writer& w) const;
     void loadState(PSKState::Reader& r);
     void requestInterrupt(int bit);
+    void releaseInterrupt(int bit);  // level drops and the pending request goes with it, no ack needed
     // Advance Timer0-2 by one system clock cycle, latching their interrupts on expiry.
     void tickTimers();
 

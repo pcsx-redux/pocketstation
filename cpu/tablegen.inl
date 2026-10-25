@@ -13,6 +13,9 @@ constexpr ARMInstrTypes ARM_getInstructionType() { // get the type of an instruc
     else if constexpr ((index >> 9) == 0b110) // coprocessor data transfer
         return ARMInstrTypes::UndefinedInstruction;
 
+    else if constexpr ((index >> 9) == 0b011 && (index & 1)) // LDR/STR with a register offset and bit 4 set is undefined
+        return ARMInstrTypes::UndefinedInstruction;
+
     else if constexpr (index == 0b000101100001) // CLZ (v5+)
         return ARMInstrTypes::UndefinedInstruction;
 

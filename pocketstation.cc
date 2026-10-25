@@ -55,7 +55,7 @@ void PocketStation::setButtons(uint32_t mask) {
     // Reflect the 5 buttons (bits 0..4 = Fire/Right/Left/Down/Up) into INT_INPUT as raw signal
     // LEVELS, edge-detected against the previously latched mask. A press (0->1) raises the level
     // AND latches the IRQ via requestInterrupt() (the latch only takes if the kernel has that bit
-    // unmasked); a release (1->0) drops the level only. INT_ACK preserves these level bits (like
+    // unmasked); a release (1->0) drops the level and the pending request. INT_ACK preserves these level bits (like
     // the dock/RTC levels), so the kernel acking a Fire IRQ does not falsely "release" a held key.
     //
     // Doing this on the press edge, which runs while the core is halted, is what lets a
@@ -70,7 +70,7 @@ void PocketStation::setButtons(uint32_t mask) {
         if (mask & bit) {
             m_bus.requestInterrupt(key);  // press edge: raise level + latch (if unmasked).
         } else {
-            m_bus.irqFlags &= ~bit;       // release edge: drop the level only.
+            m_bus.releaseInterrupt(key);  // release edge: drop the level and its pending request.
         }
     }
     m_buttons = mask;
@@ -78,7 +78,7 @@ void PocketStation::setButtons(uint32_t mask) {
 
 // Blob layout: "PSKS", a format version, then the bus, CPU, LCD and device fields in that order.
 static constexpr uint8_t kStateMagic[4] = {'P', 'S', 'K', 'S'};
-static constexpr uint32_t kStateVersion = 1;
+static constexpr uint32_t kStateVersion = 2;
 
 std::vector<uint8_t> PocketStation::saveState() const {
     PSKState::Writer w;
