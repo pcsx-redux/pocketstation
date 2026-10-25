@@ -171,7 +171,7 @@ void ARM_LDR (int rdIndex, u32 address) {
     registers [rdIndex] = val;
 
     if (rdIndex == 15) {
-        registers[15] = (val & ~3) + 8; // fake pipeline
+        registers[15] = (val & ~1) + 8; // fake pipeline; hardware keeps bit 1
     }
 
     else registers[15] += 4; // fake pipeline

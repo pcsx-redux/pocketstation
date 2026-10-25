@@ -162,6 +162,7 @@ u32 CPU::step() {
         }
     }
 
+    const bool stopWasPending = bus.stopPending;  // the store's own instruction does not count
     cycles = 0;
     branchTaken = false;
     pollInterrupts();  // charges the exception-entry refill if it dispatches
@@ -187,6 +188,14 @@ u32 CPU::step() {
     for (u32 i = 0; i < cycles; i++) {
         bus.tickRtc();
         bus.tickTimers();
+    }
+
+    if (stopWasPending) {
+        bus.stopElapsed += cycles;
+        if (bus.stopElapsed >= 3) {
+            bus.stopPending = false;
+            bus.halted = true;
+        }
     }
 
     instructions++;
@@ -289,7 +298,16 @@ void CPU::refillPipeline() {
 }
 
 void CPU::handleUndefined (u32 instruction) { // handle undefined/unknown instruction
-    Helpers::panic("Unknown %s mode instruction: %08X\nAddress: %08X", cpsr.thumb ? "Thumb" : "ARM", instruction, cpsr.thumb ? registers[15]-4 : registers[15]-8);
+    // Undefined instruction exception: LR is the next instruction, R15 reads vector + 8.
+    const auto lr = cpsr.thumb ? registers[15] - 2 : registers[15] - 4;
+    const auto newSPSR = cpsr.raw;
+
+    setMode(CPUModes::UND);
+    spsr.raw = newSPSR;
+    cpsr.thumb = 0;
+    cpsr.irqDisable = 1;
+    registers[14] = lr;
+    registers[15] = 0x04 + 8;  // vector + fake pipeline
 }
 
 void CPU::setNZ (u32 number) { // set the N and Z flags depending on the number

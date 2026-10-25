@@ -23,7 +23,7 @@ void ARM_BX (u32 instruction) {
     }
 
     else 
-        registers[15] = (rm & ~3) + 8; // fake pipeline
+        registers[15] = rm + 8; // fake pipeline; hardware keeps bit 1 of a misaligned target
 }
 
 void ARM_SWI (u32 instruction) {

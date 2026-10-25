@@ -57,6 +57,8 @@ void Bus::reset() {
     rtcCountdown = armClockHz() / 8192;
     rtcEdgeCount = 0;
     halted = false;                       // power-on: CPU clock running.
+    stopPending = false;
+    stopElapsed = 0;
 }
 
 // ---- RTC time-of-day -----------------------------------------------------------------------------
@@ -139,6 +141,12 @@ void Bus::requestInterrupt(int bit) {
         // Removing the & irqMask freezes the kernel when you press A
         irqLatch |= mask & irqMask;
     }
+}
+
+void Bus::releaseInterrupt(int bit) {
+    const u32 mask = 1 << bit;
+    irqFlags &= ~mask;
+    irqLatch &= ~mask;
 }
 
 u16 Bus::read16Slow(u32 addr) {
@@ -294,6 +302,7 @@ void Bus::write32Slow(u32 addr, u32 val) {
 
             case IO::INT_MASK_CLR:
                 irqMask &= ~val;  // Clear interrupt masks based on value (1 = clear)
+                irqLatch &= ~(val & 0x1F);  // masking a held button drops its request too (measured); other sources unmeasured
                 if (comTrace && (val & 0x40)) printf("[PSK] PC=%08X WR INT_MASK_CLR = %08X (COM-6 disabled)\n", curPC, val);
                 break;
 
@@ -431,7 +440,10 @@ void Bus::write32Slow(u32 addr, u32 val) {
                 // core (advancing only the RTC) until irqLatch & irqMask. Writing 0 is a no-op here
                 // (the core never executes while halted, so software can't clear it from this side;
                 // the wake path clears it). Keeps the system idle-cheap when undocked on battery.
-                if (val & 1) halted = true;
+                if (val & 1) {
+                    stopPending = true;
+                    stopElapsed = 0;
+                }
                 break;
 
             case IO::F_BANK_FLG:
@@ -562,6 +574,8 @@ void Bus::saveState(PSKState::Writer& w) const {
     w.u32v(irqFlags);
     w.u32v(irqLatch);
     w.flag(halted);
+    w.flag(stopPending);
+    w.u32v(stopElapsed);
 
     w.u32v(flash.enabledBanks);
     for (u32 v : flash.bankMappings) w.u8v(u8(v));  // 4-bit virtual bank numbers
@@ -605,6 +619,8 @@ void Bus::loadState(PSKState::Reader& r) {
     irqFlags = r.u32v();
     irqLatch = r.u32v();
     halted = r.flag();
+    stopPending = r.flag();
+    stopElapsed = r.u32v();
 
     flash.enabledBanks = r.u32v();
     for (u32& v : flash.bankMappings) v = r.u8v() & 0xF;
