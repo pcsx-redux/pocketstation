@@ -45,6 +45,18 @@ static int com_exchange(unsigned tx) {
 
 static inline unsigned com_rx(void) { return PSK_MMIO(COM_DATA) & 0xFFu; }
 
+/* The read's settle between the 0x5C and 0x5D acks, during which the 0x5C exchange stays
+ * unacknowledged. Retail spends it in a 250-pass Thumb countdown run from the kernel ROM, 13 cycles
+ * a pass (~3250 cycles, ~0.8 ms at 4 MHz). The same countdown compiled as ARM costs 21 cycles a
+ * pass, since an ARM fetch from the ROM takes 2 cycles to Thumb's 1, and held /ACK back ~5300
+ * cycles. That is past PCSX-Redux's 4096-cycle ack wait, so the host clocked the next byte early
+ * and read 0x5C twice. The wait is now a fixed cycle count matching retail's: 406 passes of
+ * SUBS + taken BNE at 8 cycles each from the ROM. */
+static void ack_settle(void) {
+    unsigned n = 406;
+    __asm__ volatile("1: subs %0, %0, #1\n\tbne 1b" : "+r"(n) : : "cc");
+}
+
 /* Memory Card read (command 0x52). Entered after the engine has consumed the 0x81 device-select and
  * the 0x52 command byte and sent the 0x5A 0x5D id-ack. Drives the rest of the standard protocol:
  * receive the sector address (MSB,LSB), send the command ack (0x5C 0x5D), echo the address back,
@@ -56,7 +68,7 @@ static void card_read(void) {
     if (com_exchange(0)) return;
     unsigned lsb = com_rx();
     if (com_exchange(0x5C)) return;
-    for (volatile int d = 250; d; d--) { }          /* inter-byte settle (retail busy-wait) */
+    ack_settle();
     if (com_exchange(0x5D)) return;
     if (msb >= 4) { com_exchange(0xFF); com_exchange(0xFF); return; }  /* address out of range */
     if (com_exchange(msb)) return;                  /* echo the address back to the host */
