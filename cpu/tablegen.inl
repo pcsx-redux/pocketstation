@@ -255,9 +255,13 @@ constexpr InstructionCallback Thumb_getInstructionHandler() {
 }
 
 void populateARMTable() {
-    Helpers::static_for<std::size_t, 0, 4096>([&](auto i) {
-      ARM_LUT[i] = ARM_getInstructionHandler<i>();
-    });
+    // Four 1024-entry folds: a single 4096-entry fold exceeds the
+    // 2048 expression nesting limit of the emscripten build.
+    auto fill = [&](auto i) { ARM_LUT[i] = ARM_getInstructionHandler<i>(); };
+    Helpers::static_for<std::size_t, 0, 1024>(fill);
+    Helpers::static_for<std::size_t, 1024, 2048>(fill);
+    Helpers::static_for<std::size_t, 2048, 3072>(fill);
+    Helpers::static_for<std::size_t, 3072, 4096>(fill);
 }
 
 void populateThumbTable() {
